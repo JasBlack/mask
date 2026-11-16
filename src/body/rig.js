@@ -59,13 +59,32 @@ export async function findHumanoid(gltf) {
     const key = canonical(o.name || '');
     if (key && !bones[key]) bones[key] = o;
   });
+  // The spine by the skeleton itself, not by its names: rigs number their spine bones either way up (Meshy's
+  // Spine02 is the one at the hips). Walk from the neck down to the hips and share the chain out in order.
+  const top = bones.neck ?? bones.head;
+  if (bones.hips && top) {
+    const chain = [];
+    for (let o = top.parent; o && o !== bones.hips; o = o.parent) chain.unshift(o);
+    if (chain.length && chain.length < 8 && top.parent && isUnder(top, bones.hips)) {
+      delete bones.spine; delete bones.chest; delete bones.upperChest;
+      bones.spine = chain[0];
+      if (chain.length >= 2) bones.upperChest = chain[chain.length - 1];
+      if (chain.length >= 3) bones.chest = chain[Math.floor((chain.length - 1) / 2)];
+    }
+  }
   const need = ['hips', 'leftUpperArm', 'rightUpperArm', 'leftLowerArm', 'rightLowerArm', 'leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg'];
   return need.every((k) => bones[k]) ? bones : null;
 }
 
-const ORDER = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+const DRIVEN = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
   'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand', 'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
   'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperLeg', 'rightLowerLeg', 'rightFoot'];
+
+function isUnder(o, ancestor) {
+  for (let p = o.parent; p; p = p.parent) if (p === ancestor) return true;
+  return false;
+}
+const depth = (o) => { let n = 0; for (let p = o.parent; p; p = p.parent) n++; return n; };
 
 // where the base of the skull is in the head tracker's own space (cm): the rig's head bone is hung from it
 const SKULL_BASE = new THREE.Vector3(0, -6.5, -3.5);
@@ -117,6 +136,9 @@ export function createRig(object, bones, express) {
   const sole = new THREE.Box3().setFromObject(object).min.y;
   const footHeight = rest.leftFoot && rest.rightFoot ? Math.max(0, Math.min(rest.leftFoot.p.y, rest.rightFoot.p.y) - sole) : 0;
   const hips = new THREE.Vector3();
+
+  // bones are turned parents first, whatever the rig's names say about which is which
+  const ORDER = DRIVEN.filter((k) => bones[k]).sort((a, b) => depth(bones[a]) - depth(bones[b]));
 
   const joints = Array.from({ length: 33 }, () => new THREE.Vector3());
   const want = {}; // the turn each bone should have in the world, this frame

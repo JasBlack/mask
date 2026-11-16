@@ -316,7 +316,8 @@ export class Stage {
     octx.filter = 'none';
 
     // Blind on a head that was just there: hide the whole picture rather than guess.
-    const blind = settings.strict && tracks.some((t) => t.state === HOLD);
+    // (only for somebody followed a while: a ghost seen for a moment is not a person who went missing)
+    const blind = settings.strict && tracks.some((t) => t.state === HOLD && t.established);
     if (blind) {
       this._pixelate(0, 0, w, h, Math.max(24, Math.round(Math.max(w, h) / 22)));
     } else {

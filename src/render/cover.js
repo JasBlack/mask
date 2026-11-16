@@ -198,7 +198,13 @@ export class Cover {
     const a = this.segTmp;
     const n = sw * sh;
     if (whole) {
-      for (let i = 0; i < n; i++) a[i] = classes[i] !== 0 ? 1 : 0;
+      // hair, skin and clothes; and 'other' (bags, hats, glasses) only where it touches them: in a dim, cluttered
+      // room the model calls a lot of the room 'other'
+      for (let i = 0; i < n; i++) a[i] = classes[i] >= 1 && classes[i] <= 4 ? 1 : 0;
+      const near = this.segNear ?? (this.segNear = new Uint8Array(n));
+      near.set(a);
+      dilate(near, sw, sh, Math.max(3, Math.round(sw / 48)), this.segRow);
+      for (let i = 0; i < n; i++) if (classes[i] === 5 && near[i]) a[i] = 1;
     } else {
       // hair and face skin; and skin the model calls body skin where it touches them: a face blurred by movement,
       // or an ear, is often labelled body skin at its edge

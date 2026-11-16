@@ -212,7 +212,7 @@ function describe() {
   const t = state.tracks;
   const running = !!state.kind && !els.video.paused && !state.exporting && !state.calibrating;
   els.ledLive.classList.toggle('on', running);
-  const lost = t.some((x) => x.state === HOLD), body = t.some((x) => x.state === BODY);
+  const lost = t.some((x) => x.state === HOLD && x.established), body = t.some((x) => x.state === BODY);
   els.ledLock.classList.toggle('on', t.length > 0 && !lost && !state.calibrating);
   els.ledLock.classList.toggle('p', body && !lost);
   els.ledRec.classList.toggle('on', !!state.recorder);

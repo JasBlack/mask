@@ -54,6 +54,9 @@ class Track {
     this.cx = 0; this.cy = 0; this.sizePx = 0;
     this.born = tMs;
     this.lastSeen = tMs;
+    /** Frames in which this head was seen (face or body). A head seen only a few times and then lost was most
+     *  likely a ghost (the same person twice, or a face in a poster); it is not held, and does not hide the picture. */
+    this.seenFrames = 0;
     this.heldMs = 0;
     this.depthK = 1;
     this.snap = true;
@@ -186,6 +189,9 @@ export class HeadTracker {
       });
     }
 
+    // the same face twice (it happens with more than one face allowed): keep the larger
+    dedupe(dets, (d) => d.size, 0.5);
+
     // ---- match faces to the heads already followed
     const faceOf = new Map();
     const pairs = [];
@@ -210,6 +216,7 @@ export class HeadTracker {
     }
     for (const d of dets) {
       if (d.used || this.tracks.length >= this.maxPeople * 2) continue;
+      if (this.tracks.some((t) => near(t, d, 1))) continue; // somebody already followed, not a new person
       const t = new Track(this._nextId++, tMs);
       this.tracks.push(t);
       d.used = true;
@@ -233,13 +240,21 @@ export class HeadTracker {
         const p = headFromPose(pr.landmarks[i], pr.worldLandmarks[i], w, h);
         if (p) { p.lm = pr.landmarks[i]; p.world = pr.worldLandmarks[i]; persons.push(p); }
       }
-      // a body whose head already has a face lock has nothing more to say about the head
+      // the body tracker can report one person twice, a little apart: keep the one it is surest of
+      dedupe(persons, (p) => p.vis, 0.7);
+      // a body whose head already has a face lock has nothing more to say about the head. Its nose is the surest
+      // way to tell: close to the camera the two trackers can put the middle of the head some way apart
       for (const p of persons) {
+        let best = null, bestDist = Infinity;
         for (const [t, d] of faceOf) {
-          if (Math.hypot(p.cx - d.cx, p.cy - d.cy) < 0.9 * Math.max(p.size, d.size)) {
-            p.used = true;
-            if (!bodyOf.has(t)) bodyOf.set(t, p);
-          }
+          const nx = p.lm[0].x * w, ny = p.lm[0].y * h;
+          const dist = Math.hypot(p.cx - d.cx, p.cy - d.cy);
+          const noseIn = Math.hypot(nx - d.cx, ny - d.cy) < 0.75 * d.size;
+          if ((noseIn || dist < 1.3 * Math.max(p.size, d.size)) && dist < bestDist) { best = t; bestDist = dist; }
+        }
+        if (best) {
+          p.used = true;
+          if (!bodyOf.has(best)) bodyOf.set(best, p);
         }
       }
     }
@@ -326,6 +341,7 @@ export class HeadTracker {
     if (persons) {
       for (const p of persons) {
         if (p.used || p.vis < 0.4 || this.tracks.length >= this.maxPeople * 2) continue;
+        if (this.tracks.some((t) => near(t, p, 1.6))) continue; // somebody already followed, not a new person
         const t = new Track(this._nextId++, tMs);
         this.tracks.push(t);
         bodyOf.set(t, p);
@@ -343,8 +359,19 @@ export class HeadTracker {
       }
     }
 
+    // ---- two heads followed in one place are one person: keep the one that sees most (face, then body, then
+    // nothing), else the older. A ghost left holding would otherwise keep the whole picture hidden.
+    const rank = (t) => (t.state === FACE ? 2 : t.state === BODY ? 1 : 0);
+    this.tracks.sort((a, b) => rank(b) - rank(a) || a.id - b.id);
+    const kept = [];
+    for (const t of this.tracks) {
+      if (!kept.some((k) => near(k, t, 0.8))) kept.push(t);
+    }
+    this.tracks = kept.sort((a, b) => a.id - b.id);
+
     // ---- the whole body under each head, when asked for
     for (const t of this.tracks) this._followBody(t, bodyOf.get(t), w, h, f, dt, tMs);
+    for (const t of this.tracks) t.established = t.seenFrames >= 10;
 
     // ---- every pixel labelled, for the cover
     this._segment(image, w, h);
@@ -355,8 +382,9 @@ export class HeadTracker {
       const m = 0.25 * t.sizePx;
       const left = t.cx < -m || t.cx > w + m || t.cy < -m || t.cy > h + m;
       const limit = left ? 200
-        : t.nobodyThere ? (this.failClosed ? this.closedEmptyHoldMs : this.emptyHoldMs)
-          : (this.failClosed ? this.closedHoldMs : this.holdMs);
+        : !t.established ? 300
+          : t.nobodyThere ? (this.failClosed ? this.closedEmptyHoldMs : this.emptyHoldMs)
+            : (this.failClosed ? this.closedHoldMs : this.holdMs);
       return t.heldMs <= limit;
     });
     this.tracks.segments = this.segments;
@@ -405,7 +433,10 @@ export class HeadTracker {
     const k = THREE.MathUtils.clamp(-_v.z / Math.max(earDepth, 1), 0.6, 1.7);
     b.k = fresh ? k : b.k + (k - b.k) * (1 - Math.exp(-dt / 0.4));
     for (let i = 0; i < 33; i++) {
-      const d = (depth - (b.world[i * 3 + 2] - z0) * 100) * b.k;
+      // a joint's depth from the model's own 3D figure, held within reach of the body: for joints it cannot see
+      // (below a desk, out of frame) the figure is a guess, and an unchecked guess can put a knee at the lens
+      const off = THREE.MathUtils.clamp((b.world[i * 3 + 2] - z0) * 100, -70, 70);
+      const d = Math.max(depth - off, depth * 0.6) * b.k;
       b.joints[i].set(((b.px[i * 2] - w / 2) * d) / f, (-(b.px[i * 2 + 1] - h / 2) * d) / f, -d);
     }
     b.seen = tMs;
@@ -484,6 +515,7 @@ export class HeadTracker {
   }
 
   _measure(t, m, state, dt) {
+    t.seenFrames++;
     const snap = t.snap;
     t.snap = false;
     t.state = state;
@@ -557,6 +589,21 @@ function headFromPose(lm, wl, w, h) {
     }
   }
   return { cx, cy, size, quat, vis: (nose.v + le.v + re.v) / 3, used: false };
+}
+
+/** Are two heads (anything with cx, cy and a size) in the same place: closer than `k` head widths? */
+function near(a, b, k) {
+  const sa = a.sizePx ?? a.size, sb = b.sizePx ?? b.size;
+  return Math.hypot(a.cx - b.cx, a.cy - b.cy) < k * Math.max(sa, sb, 1);
+}
+
+/** Drop, in place, any item closer than `k` head widths to one ranked higher by `score`. */
+function dedupe(items, score, k) {
+  items.sort((a, b) => score(b) - score(a));
+  const kept = [];
+  for (const it of items) if (!kept.some((o) => near(o, it, k))) kept.push(it);
+  items.length = 0;
+  items.push(...kept);
 }
 
 // pairs of pose points used to judge how big a body is in the picture: trunk, shoulders to head, upper limbs

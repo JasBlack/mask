@@ -98,6 +98,9 @@ All need `npm run build`, `npm run preview`, and Playwright with Chromium availa
 - `tests/camera.mjs <camera.y4m> <out>`: live path with Chromium's fake camera, mirror, record.
 - `tests/ui.mjs <video> <glb> <out>`: import a `.glb`, fit by points, right-click slider reset, phone width.
 - `tests/smoke.mjs`, `tests/make-test-glb.mjs`: pictures of the page; a small model with three shape keys.
+- `tests/people.mjs <video> <out> [fps] [every] [max] [head|body]`: on a clip with one person, counts the people
+  followed per frame (must be 1) and the frames hidden (must be 0). Run it on a close-up (the comment at its top
+  says how to make one): the duplicate-person bug only showed with a person close to the camera.
 
 ## Status
 
@@ -144,6 +147,17 @@ Unverified:
 - A body may reclaim a lost head only within reach for how long it has been lost. Without that limit one mask
   hops between two people as the body tracker alternates between them.
 - With `failClosed` (the hide-picture key) a lost head is not let go on a timer while anybody is in the picture.
+  Only an established head (seen in 10 frames or more) counts: one seen for a moment and lost is a ghost, dropped
+  after 300 ms, and it never hides the picture.
+- One person must never become two. Close to the camera the face and the body trackers put the middle of the
+  head some way apart, and the body tracker can report one person twice. So: faces and bodies are deduplicated,
+  a body is tied to a face by its nose, a new head is only made far from every head already followed, and two
+  heads that end up in one place are merged (face beats body beats lost, then the older). Before this, with four
+  people allowed, a ghost second head kept hiding the whole picture (the owner's recordings, 0.3.0).
+- Joint depths from the pose model's 3D figure are a guess for joints it cannot see. They are held within 70 cm
+  of the body and never nearer than 60% of its distance; unchecked, a knee under a desk came out at the lens.
+- Rigs name their spine bones either way up (Meshy: Spine02 is at the hips). `findHumanoid` takes the spine
+  from the chain between neck and hips, and `createRig` turns bones parents first by their depth in the tree.
 - Dark, glossy three.js materials with iridescence render as chrome. The mask's dark parts have their own
   material with none.
 - The hair cap of the satyr is laid out meridian by meridian down to the hairline, so its edge is smooth. Cutting

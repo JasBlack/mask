@@ -17,7 +17,8 @@ On the left:
 - **Character.** Pick one, and `head` (a mask on the head) or `whole body` (a figure from head to foot, strung
   between your own joints so it has your height and reach). Drop a `.glb` on the page to add your own: a head
   model becomes a mask; a rigged character (Mixamo, VRM, Ready Player Me, and most humanoid skeletons) moves with
-  your whole body. Your own characters are remembered in this browser. `show character` off leaves only the cover.
+  your whole body (Meshy's auto-rigged "biped" files included). Your own characters are remembered in this
+  browser. `show character` off leaves only the cover.
 - **Scene.** `camera` keeps the real picture, with the character over you. `stage` puts the character in a
   simulated place (`void`, `studio`, `dusk`), and nothing of the real picture is shown. Drop a 360 picture (2:1)
   on the page to stand in that instead.
