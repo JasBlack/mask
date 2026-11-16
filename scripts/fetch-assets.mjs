@@ -9,6 +9,13 @@ const wasmFrom = join(root, 'node_modules/@mediapipe/tasks-vision/wasm');
 const wasmTo = join(root, 'public/mediapipe/wasm');
 const modelsTo = join(root, 'public/models');
 
+// The whole-body engine (person detector + RTMW3D) is optional: only downloaded by the page when it is chosen.
+// Both are Apache-2.0 (OpenMMLab models, ONNX exports on Hugging Face).
+const ENGINE_MODELS = {
+  'rtmdet-n-person.onnx': 'https://huggingface.co/bukuroo/RTMDet-ONNX/resolve/main/rtmdet-n-person.onnx',
+  'rtmw3d-l.onnx': 'https://huggingface.co/RabbitDaisuke/rtmw3d-webgpu-onnx/resolve/main/onnx/rtmw3d-l-fp32.onnx',
+};
+
 const MODELS = {
   'face_landmarker.task':
     'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
@@ -31,7 +38,7 @@ for (const name of await readdir(wasmFrom)) {
 }
 console.log(`[assets] wasm runtime: ${copied} files -> public/mediapipe/wasm`);
 
-for (const [name, url] of Object.entries(MODELS)) {
+for (const [name, url] of Object.entries({ ...MODELS, ...ENGINE_MODELS })) {
   const to = join(modelsTo, name);
   if (await exists(to)) { console.log(`[assets] ${name}: already present`); continue; }
   try {

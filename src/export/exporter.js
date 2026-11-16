@@ -80,7 +80,9 @@ export async function exportFile(file, { tracker, stage, keepAudio = true, onPro
       processedHeight: H,
       process: async (sample) => {
         stage.captureVia((ctx) => sample.draw(ctx, 0, 0, W, H), W, H);
-        const tracks = tracker.update(stage.frame, W, H, base + sample.timestamp * 1000);
+        const at = base + sample.timestamp * 1000;
+        // (null: the tracker was reset while it had this frame. Track it again: no frame is written unmasked)
+        const tracks = (await tracker.update(stage.frame, W, H, at)) ?? (await tracker.update(stage.frame, W, H, at));
         stage.render(tracks, lastT == null ? 0 : Math.max(0, sample.timestamp - lastT));
         lastT = sample.timestamp;
         log.push({ t: sample.timestamp, states: tracks.map((t) => t.state), hidden: stage.report.hidden });

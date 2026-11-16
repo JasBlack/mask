@@ -64,5 +64,19 @@ export function settle(body, out) {
     _a.copy(out[ankle]).addScaledVector(_down, 0.22 * S).addScaledVector(_fwd, 0.5 * S);
     out[toe].lerpVectors(_a, p[toe], footSeen);
   }
+  // the same for an arm out of the picture: it hangs at the side (the whole-body engine places an unseen arm
+  // anywhere in its crop, and a figure strung to that reached for the lens)
+  for (const [side, sh0, elbow, wrist, hands] of [[1, J.shoulderL, J.elbowL, J.wristL, [17, 19, 21]], [-1, J.shoulderR, J.elbowR, J.wristR, [18, 20, 22]]]) {
+    const elbowSeen = smooth(0.2, 0.5, Math.min(v[sh0], v[elbow]));
+    const wristSeen = smooth(0.2, 0.5, Math.min(v[elbow], v[wrist]));
+    _a.copy(out[sh0]).addScaledVector(_down, 0.85 * S).addScaledVector(_x, side * 0.1 * S);
+    out[elbow].lerpVectors(_a, p[elbow], elbowSeen);
+    _a.copy(out[elbow]).addScaledVector(_down, 0.75 * S).addScaledVector(_fwd, 0.1 * S);
+    out[wrist].lerpVectors(_a, p[wrist], wristSeen);
+    for (const i of hands) {
+      _a.copy(out[wrist]).addScaledVector(_down, 0.2 * S);
+      out[i].lerpVectors(_a, p[i], smooth(0.2, 0.5, Math.min(v[wrist], v[i])));
+    }
+  }
   return { S, torso };
 }

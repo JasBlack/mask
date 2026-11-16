@@ -26,7 +26,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # npm ci also copies the tracker's runtime and downloads its two models into public/ (scripts/fetch-assets.mjs).
+      # The models (about 265 MB, the rtmw3d engine's included) are kept between builds rather than fetched each time.
+      - uses: actions/cache@v4
+        with:
+          path: public/models
+          key: models-${{ hashFiles('scripts/fetch-assets.mjs') }}
+      # npm ci also copies the tracker's runtime and downloads any model not cached into public/ (scripts/fetch-assets.mjs).
       # On CI a model that cannot be downloaded fails the build, so the site never goes out without its own copy.
       - run: npm ci
       - run: npm run build

@@ -23,10 +23,10 @@ const TUNE = {
   [BODY]: { xy: [1.4, 0.06], z: [0.6, 0.02], rot: [0.9, 0.8] },
 };
 
-const EAR_MID = new THREE.Vector3(...CANON.earMid);
+export const EAR_MID = new THREE.Vector3(...CANON.earMid);
 // The line from between the ears to the tip of the nose dips below the head's forward axis by this much.
 const NOSE_DIP = Math.atan2(CANON.earMid[1] - CANON.noseTip[1], CANON.noseTip[2] - CANON.earMid[2]);
-const Q_NOSE_DIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -NOSE_DIP);
+export const Q_NOSE_DIP = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -NOSE_DIP);
 
 const _m = new THREE.Matrix4();
 const _s = new THREE.Vector3();
@@ -38,7 +38,7 @@ const _z = new THREE.Vector3();
 const _ray = new THREE.Quaternion();
 const _fwd = new THREE.Vector3(0, 0, -1);
 
-class Track {
+export class Track {
   constructor(id, tMs) {
     this.id = id;
     this.state = HOLD;
@@ -69,7 +69,15 @@ class Track {
   }
 }
 
+// MediaPipe needs timestamps that only go up, per task. The segmenter is shared by both engines' trackers, so the
+// clock is one for the page, not one per tracker: a tracker made later would otherwise start it again from 10.
+const CLOCK = { ts: 10 };
+
 export class HeadTracker {
+  /** MediaPipe's clock, ms (see CLOCK). */
+  get _ts() { return CLOCK.ts; }
+  set _ts(v) { CLOCK.ts = v; }
+
   constructor({ face, pose, zoom, segments }) {
     this.face = face;
     this.pose = pose;
@@ -104,7 +112,6 @@ export class HeadTracker {
     this.wantBody = false;
     this.stats = { faceMs: 0, poseMs: 0, ranPose: false, zooms: 0, segMs: 0 };
     this._nextId = 1;
-    this._ts = 10;
     this._lastT = null;
     this._frame = 0;
   }
@@ -359,6 +366,11 @@ export class HeadTracker {
       }
     }
 
+    return this._settle(image, w, h, f, dt, tMs, bodyOf);
+  }
+
+  /** The end of every frame, whichever engine saw it: merge, bodies, labels, and letting go. */
+  _settle(image, w, h, f, dt, tMs, bodyOf) {
     // ---- two heads followed in one place are one person: keep the one that sees most (face, then body, then
     // nothing), else the older. A ghost left holding would otherwise keep the whole picture hidden.
     const rank = (t) => (t.state === FACE ? 2 : t.state === BODY ? 1 : 0);
@@ -592,13 +604,13 @@ function headFromPose(lm, wl, w, h) {
 }
 
 /** Are two heads (anything with cx, cy and a size) in the same place: closer than `k` head widths? */
-function near(a, b, k) {
+export function near(a, b, k) {
   const sa = a.sizePx ?? a.size, sb = b.sizePx ?? b.size;
   return Math.hypot(a.cx - b.cx, a.cy - b.cy) < k * Math.max(sa, sb, 1);
 }
 
 /** Drop, in place, any item closer than `k` head widths to one ranked higher by `score`. */
-function dedupe(items, score, k) {
+export function dedupe(items, score, k) {
   items.sort((a, b) => score(b) - score(a));
   const kept = [];
   for (const it of items) if (!kept.some((o) => near(o, it, k))) kept.push(it);
@@ -627,7 +639,7 @@ function newBody() {
   };
 }
 
-function blendToward(blend, cats, dt) {
+export function blendToward(blend, cats, dt) {
   if (!cats) return;
   for (const c of cats) {
     const name = c.categoryName;
@@ -638,7 +650,7 @@ function blendToward(blend, cats, dt) {
   }
 }
 
-function relax(blend, dt) {
+export function relax(blend, dt) {
   const k = Math.exp(-dt / 0.25);
   for (const name in blend) blend[name] *= k;
 }

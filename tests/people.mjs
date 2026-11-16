@@ -14,8 +14,10 @@ fs.mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
-  await page.goto('http://127.0.0.1:5421/?delegate=cpu');
+  await page.goto(`http://127.0.0.1:5421/?delegate=cpu&engine=${process.env.ENGINE ?? 'mediapipe'}`);
   await page.waitForFunction(() => window.__maskLayer, null, { timeout: 120000 });
+  // ENGINE=rtmw3d runs the other engine: wait for it (on the processor here, about two seconds a frame)
+  if (process.env.ENGINE === 'rtmw3d') await page.waitForFunction(() => window.__maskLayer.tracker?.kind === 'rtmw3d', null, { timeout: 300000 });
   await page.setInputFiles('#file-input', video);
   await page.waitForFunction(() => window.__maskLayer.state.kind === 'file', null, { timeout: 30000 });
   const r = await page.evaluate(async ({ fps, every, maxFrames, character }) => {
@@ -31,7 +33,7 @@ fs.mkdirSync(outDir, { recursive: true });
     for (let i = 0; i < total; i++) {
       await seek((i + 0.5) / fps);
       stage.captureFrame(v, w, h);
-      const tracks = tracker.update(stage.frame, w, h, t0 + (i * 1000) / fps);
+      const tracks = await tracker.update(stage.frame, w, h, t0 + (i * 1000) / fps);
       stage.render(tracks, 1 / fps);
       rows.push({ i, n: tracks.length, states: tracks.map((t) => t.state).join('+'), hidden: stage.report.hidden });
       if (i % every === 0 || tracks.length > 1) if (shots.length < 40) shots.push({ i, n: tracks.length, url: stage.out.toDataURL('image/jpeg', 0.8) });

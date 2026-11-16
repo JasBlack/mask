@@ -32,7 +32,7 @@
 </head>
 <!-- A console-layout JAS.BLACK tool: title and status lights, transport, view keys;
      source, mask, cover and save on the left, the stage, fit and tracking on the right. Always the full console. -->
-<body data-ui="dark" data-tool="mask" data-version="0.3.1">
+<body data-ui="dark" data-tool="mask" data-version="0.4.0">
 
 <header class="topbar">
   <div class="hl">
@@ -218,6 +218,12 @@
       <label class="control"><span class="control-top"><span>people to cover</span></span>
         <select id="people" aria-label="People to cover"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
       </label>
+      <div class="control"><span class="control-top"><span>engine</span></span>
+      <div class="seg" role="group" aria-label="Which tracking engine" id="engine-pick">
+        <button type="button" aria-pressed="true" data-value="mediapipe" title="MediaPipe: a face mesh, the body, and a closer look for small faces. Small and quick">mediapipe</button>
+        <button type="button" aria-pressed="false" data-value="rtmw3d" title="RTMW3D: one model reads face, body and hands together, also in profile and from behind. A 235 MB download, once; best with a graphics card (WebGPU)">rtmw3d</button>
+      </div>
+      </div>
       <div class="keys-row">
         <button type="button" class="key toggle" id="landmarks" aria-pressed="false">tracking points</button>
       </div>

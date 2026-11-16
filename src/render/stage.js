@@ -331,6 +331,15 @@ export class Stage {
       octx.fillStyle = this.palette.accent;
       for (const t of tracks) {
         if (t.landmarks) for (const p of t.landmarks) octx.fillRect(p.x * w - 1, p.y * h - 1, 2, 2);
+        // the other engine's 133 points: face and hands small, body large
+        if (t.points) {
+          const { kp, sc } = t.points;
+          for (let i = 0; i < 133; i++) {
+            if (sc[i] < 0.3) continue;
+            const r = i < 23 ? 2 : 1;
+            octx.fillRect(kp[i * 3] - r, kp[i * 3 + 1] - r, 2 * r, 2 * r);
+          }
+        }
         if (whole && t.body) for (let i = 0; i < 33; i++) octx.fillRect(t.body.px[i * 2] - 2, t.body.px[i * 2 + 1] - 2, 4, 4);
       }
     }

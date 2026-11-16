@@ -6,6 +6,8 @@ import { toast, paintRange } from './family.js';
 import * as THREE from 'three';
 import { createLandmarkers } from './tracking/landmarkers.js';
 import { HeadTracker, FACE, BODY, HOLD } from './tracking/headTracker.js';
+import { WholeBodyTracker } from './tracking/wholeBodyTracker.js';
+import { createWholeBody } from './tracking/wholeBody.js';
 import { CANON, FACE_OVAL } from './tracking/canonical.js';
 import { Stage, IDENTITY_FIT } from './render/stage.js';
 import { satyr } from './masks/satyr.js';
@@ -27,7 +29,7 @@ const els = {
   underlay: $('underlay'), strict: $('strict'), keepAudio: $('keep-audio'),
   exportBusy: $('export-busy'), exportCancel: $('export-cancel'), meter: $('meter'), meterFill: $('meter-fill'), saveNote: $('save-note'),
   fitReset: $('fit-reset'), fitPoints: $('fit-points'), guideHead: $('guide-head'), coverage: $('coverage'),
-  margin: $('margin'), marginVal: $('margin-val'), people: $('people'), landmarks: $('landmarks'), engine: $('engine'), look: $('look'),
+  margin: $('margin'), marginVal: $('margin-val'), people: $('people'), landmarks: $('landmarks'), engine: $('engine'), enginePick: $('engine-pick'), look: $('look'),
   scrubrow: $('scrubrow'), scrub: $('scrub'), time: $('time'), duration: $('duration'), sound: $('sound'),
   pins: $('pins'), fitbar: $('fitbar'), fitApply: $('fit-apply'), fitCancel: $('fit-cancel'),
   character: $('character'), scene: $('scene'), stageLook: $('stage-look'), sceneHint: $('scene-hint'), coverHint: $('cover-hint'),
@@ -41,6 +43,8 @@ const fitSliders = all('input[data-fit]');
 
 const stage = new Stage(els.out);
 let tracker = null;
+/** Both engines, once loaded: MediaPipe's landmarkers and the whole-body models. */
+const engines = { lm: null, mediapipe: null, rtmw3d: null, loading: null };
 
 // the picture uses the family's own colours: read them from the tokens rather than repeat them
 const token = (name) => getComputedStyle(document.body).getPropertyValue(name).trim();
@@ -48,7 +52,7 @@ stage.setPalette({ accent: token('--accent'), accent2: token('--accent2'), stage
 
 const prefs = store.load('prefs', {
   mask: 'satyr', underlay: 'pixelate', margin: 1, strict: true, people: 4, peopleChosen: false, look: 'none', keepAudio: true, showMask: true,
-  character: 'head', scene: 'camera', stageLook: 'void', build: 1,
+  character: 'head', scene: 'camera', stageLook: 'void', build: 1, engine: 'mediapipe',
 });
 const fits = store.load('fits', {});
 const masks = [satyr, helm, bag];
@@ -67,6 +71,8 @@ const state = {
   fps: 0,
   scrubbing: false,
   manual: false,
+  busy: false,
+  again: false,
 };
 
 const pressed = (el) => el.getAttribute('aria-pressed') === 'true';
@@ -232,6 +238,72 @@ function describe() {
     text = `${what}${whole}${where} · ${state.fps.toFixed(0)} fps · ${stage.w} × ${stage.h}`;
   }
   els.status.textContent = text;
+  if (tracker?.kind === 'rtmw3d' && performance.now() - (state.engineShown ?? 0) > 500) {
+    state.engineShown = performance.now();
+    describeEngine();
+  }
+}
+
+const choice = () => els.enginePick.querySelector('[aria-pressed=true]')?.dataset.value;
+
+function describeEngine() {
+  if (engines.loading && choice() === 'rtmw3d') return; // the download reports itself
+  if (tracker?.kind === 'rtmw3d') {
+    const s = tracker.stats;
+    const on = tracker.engine.device === 'webgpu' ? 'the graphics card (webgpu)' : 'the processor: slow. a browser with webgpu is much quicker';
+    const times = s.poseMs ? ` · ${Math.round(s.detMs)} + ${Math.round(s.poseMs)} ms a frame` : '';
+    els.engine.textContent = `tracker: rtmw3d on ${on}${times}. face, body and hands in one model, also in profile`;
+  } else if (engines.lm) {
+    els.engine.textContent = `tracker: mediapipe on ${engines.lm.delegate.toLowerCase()} · models ${engines.lm.localModels ? 'served from this page' : 'fetched from storage.googleapis.com'}. rtmw3d is a 235 mb download, once`;
+  }
+}
+
+/** Switch the tracking engine. RTMW3D is downloaded the first time (then kept by the browser). */
+async function useEngine(name) {
+  if (state.exporting || state.calibrating) { setSeg(els.enginePick, tracker?.kind ?? 'mediapipe'); toast('finish the export or the fit first'); return; }
+  setSeg(els.enginePick, name);
+  if (name === 'rtmw3d' && !engines.rtmw3d) {
+    engines.loading ??= (async () => {
+      const show = (what, f, bytes) => {
+        if (choice() !== 'rtmw3d') return; // switched back meanwhile: the download carries on quietly
+        const much = f < 1 ? `${Math.round(f * 100)}%` : bytes ? `${Math.round(bytes / 1e6)} mb` : '';
+        els.engine.textContent = what === 'starting' ? 'rtmw3d: starting'
+          : f === 1 && !bytes ? `rtmw3d: reading the ${what} from this browser`
+            : `rtmw3d: downloading the ${what} ${much}`.trim();
+      };
+      els.engine.textContent = 'rtmw3d: loading';
+      const eng = await createWholeBody({ onProgress: show });
+      engines.rtmw3d = new WholeBodyTracker(eng, engines.lm);
+    })();
+    try {
+      await engines.loading;
+    } catch (err) {
+      console.error(err);
+      toast(`rtmw3d did not load: ${String(err.message || err).toLowerCase()}`);
+      engines.loading = null;
+      setSeg(els.enginePick, tracker?.kind ?? 'mediapipe');
+      describeEngine();
+      return;
+    }
+    engines.loading = null;
+    if (choice() !== name) return; // changed mind meanwhile
+  }
+  const next = engines[name];
+  if (!next) return;
+  savePref('engine', name);
+  if (next !== tracker) {
+    tracker?.reset();
+    next.reset();
+    tracker = next;
+    tracker.failClosed = prefs.strict;
+    await tracker.setMaxPeople(prefs.people);
+    state.tracks = [];
+    state.lastFrameAt = 0;
+    stage.forget();
+    syncBody();
+  }
+  describeEngine();
+  if (state.kind && els.video.paused) tick();
 }
 
 // ---------------------------------------------------------------- frames
@@ -244,12 +316,37 @@ function tick() {
   let w = v.videoWidth, h = v.videoHeight;
   const cap = 1280 / Math.max(w, h);
   if (cap < 1) { w = Math.round(w * cap); h = Math.round(h * cap); }
+  // the whole-body engine answers later (its models run on the graphics card): until it has, newer frames wait
+  if (state.busy) { state.again = true; return; }
   stage.captureFrame(v, w, h);
   const dt = state.lastFrameAt ? Math.min(0.25, (now - state.lastFrameAt) / 1000) : 0;
-  state.tracks = tracker.update(stage.frame, w, h, now);
+  const r = tracker.update(stage.frame, w, h, now);
+  if (!(r instanceof Promise)) { shown(r, now, dt); return; }
+  state.busy = true;
+  const loop = state.loop, by = tracker;
+  r.then((tracks) => {
+    state.busy = false;
+    const live = loop === state.loop && !state.exporting && !state.calibrating;
+    // no tracks (null) means the tracker was reset while this frame was in it (a seek, another engine): the
+    // frame is never shown, since nothing was found in it to cover
+    if (live && tracks && by === tracker) shown(tracks, now, dt);
+    // a paused video asked for its frame while this one was being tracked
+    if (state.again) { state.again = false; if (live && els.video.paused) tick(); }
+  }, (err) => {
+    state.busy = false;
+    console.error(err);
+    if (performance.now() - (state.errorShown ?? -1e9) > 5000) {
+      state.errorShown = performance.now();
+      toast(`tracking failed: ${String(err.message || err).toLowerCase()}`);
+    }
+  });
+}
+
+/** The second half of a frame, once it is tracked: mask it, show it. */
+function shown(tracks, now, dt) {
+  state.tracks = tracks;
   stage.render(state.tracks, dt);
   state.recorder?.frame(now);
-
   if (state.lastFrameAt) state.fps += (1000 / (now - state.lastFrameAt) - state.fps) * 0.1;
   state.lastFrameAt = now;
   describe();
@@ -615,6 +712,7 @@ bindSeg(els.underlay, (v) => { stage.settings.underlay = v; savePref('underlay',
 bindSeg(els.character, setCharacter);
 bindSeg(els.scene, setScene);
 bindSeg(els.stageLook, (v) => { stage.scenery.set(v); savePref('stageLook', v); redraw(); });
+bindSeg(els.enginePick, useEngine);
 els.build.addEventListener('input', () => {
   stage.settings.build = Number(els.build.value);
   els.buildVal.textContent = stage.settings.build.toFixed(2);
@@ -763,11 +861,13 @@ async function init() {
       delegate: query.get('delegate') === 'cpu' ? 'CPU' : 'GPU',
       pose: query.get('pose') === 'lite' ? 'lite' : 'full',
     });
-    tracker = new HeadTracker(lm);
+    engines.lm = lm;
+    tracker = engines.mediapipe = new HeadTracker(lm);
+    tracker.kind = 'mediapipe';
     tracker.maxPeople = prefs.people;
     tracker.failClosed = prefs.strict;
     syncBody();
-    els.engine.textContent = `tracker: mediapipe on ${lm.delegate.toLowerCase()} · models ${lm.localModels ? 'served from this page' : 'fetched from storage.googleapis.com'}`;
+    describeEngine();
   } catch (err) {
     console.error(err);
     els.status.textContent = 'the tracker did not load. reload the page; if it persists, try chrome or edge';
@@ -778,7 +878,14 @@ async function init() {
   if (!navigator.mediaDevices?.getUserMedia) { els.camera.disabled = true; els.emptyCamera.disabled = true; }
   describe();
   // for the test scripts and for poking at from the console
-  window.__maskLayer = { stage, tracker, state, openFile, startCamera, runExport, selectMask, startCalibration, endCalibration, pinAt, createLandmarkers, FACE_OVAL, FACE, BODY, HOLD };
+  window.__maskLayer = {
+    stage, get tracker() { return tracker; }, state, openFile, startCamera, runExport, selectMask, startCalibration, endCalibration, pinAt,
+    createLandmarkers, useEngine, FACE_OVAL, FACE, BODY, HOLD,
+  };
+  // the other engine, if it was the one chosen last time (MediaPipe follows in the meantime)
+  const query = new URLSearchParams(location.search);
+  const want = query.get('engine') ?? prefs.engine;
+  if (want === 'rtmw3d') useEngine('rtmw3d');
 }
 
 init();

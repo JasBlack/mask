@@ -38,8 +38,8 @@ On the right:
   part of the mask and it is resized and moved to match. `head outline` draws a wire head, to see whether the mask
   encloses it.
 - **Body.** How thick the whole-body figure is, or how big a rigged character is.
-- **Tracking.** How far the cover reaches, how many people to cover (four unless you choose), and the tracking
-  points.
+- **Tracking.** How far the cover reaches, how many people to cover (four unless you choose), the tracking
+  engine (see below), and the tracking points.
 - **Picture.** A look for the whole picture.
 
 The lights by the title: `live` is a source running; `lock` is green while the face is tracked and violet while
@@ -48,6 +48,24 @@ under the picture says the same in words.
 
 Keys: `Space` pause, `E` export, `R` record, `B` whole body, `V` stage, `M` mirror, `F` full screen. `guide` in
 the top bar is the short version of this section; the key beside it switches light and dark.
+
+## Two tracking engines
+
+`mediapipe` is the one the tool started with: a face mesh (478 points and 52 expressions), a separate body
+tracker, and a closer look at small faces. It is small (about 30 MB) and quick, also without a graphics card. Its
+weak point is the turn to profile: the face mesh gives up, the body tracker takes over, and the hand-over between
+two trackers is where it can jump.
+
+`rtmw3d` is one model for the whole person. A person detector (RTMDet) finds everybody in the picture, facing the
+camera or not, and RTMW3D reads 133 points from each: body, feet, 68 face points and both hands, with depth. Face
+and body come from the same look at the same person, so there is no hand-over and nobody is counted twice, and
+the face points are still placed in profile, where the head stays locked. The head's turn and place are fitted to
+the face points; expressions are read from their shape (eyes, brows, mouth), rougher than MediaPipe's. It is a 235
+MB download the first time it is chosen (the browser keeps it), and it wants a graphics card through WebGPU
+(Chrome, Edge; Safari 26): on the processor alone it manages about one frame every two seconds. The segmenter
+that finds hair and skin for the cover is MediaPipe's in both.
+
+Switch between them under Tracking and compare on the same video; the choice is remembered.
 
 ## How the cover finds a whole head
 
@@ -158,13 +176,15 @@ npm run dev
 ```
 
 Then open `http://localhost:5420` in Chrome or Edge. `npm install` also copies the tracker's runtime out of
-`node_modules` and downloads its three model files (about 30 MB) into `public/`, once. `npm run build` writes the
+`node_modules` and downloads its model files into `public/`, once: MediaPipe's three (about 30 MB) and the
+`rtmw3d` engine's two (about 235 MB). `npm run build` writes the
 static site to `dist/`. The camera needs `https://` or `localhost`.
 
 ## Publish it
 
 It is a static site with no server side. Published, it still does all its work in the visitor's browser: the
-page, the tracker and the models are downloaded once (about 45 MB, then cached), and no video goes back.
+page, the tracker and the models are downloaded once (about 45 MB, then cached; the `rtmw3d` engine another 235
+MB, only if it is chosen), and no video goes back.
 
 Every push to `main` is built and published by `.github/workflows/pages.yml`. The repository needs, once:
 
@@ -177,4 +197,6 @@ turning, and the entry for the card generator.
 
 `CLAUDE.md` has the rest: the stack, where everything is, the tests, what is and is not verified.
 
-MIT licence. Fonts: Archivo and IBM Plex Mono, SIL Open Font License (`public/LICENSES/`).
+MIT licence. Fonts: Archivo and IBM Plex Mono, SIL Open Font License (`public/LICENSES/`). The `rtmw3d` engine's
+models are OpenMMLab's RTMDet and RTMW3D (Apache-2.0), as ONNX exports by bukuroo and RabbitDaisuke on Hugging
+Face; they run on ONNX Runtime Web (MIT).

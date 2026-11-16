@@ -154,6 +154,16 @@ export class Cover {
         });
         ctx.closePath();
         ctx.fill();
+      } else if (t.state === FACE && t.faceOutline) {
+        // the other engine's face: 68 points, the brows lifted to the hairline
+        let cx = 0, cy = 0;
+        for (const [x, y] of t.faceOutline) { cx += x; cy += y; }
+        cx /= t.faceOutline.length; cy /= t.faceOutline.length;
+        const k = 1.2 * grow;
+        ctx.beginPath();
+        t.faceOutline.forEach(([x, y], n) => (n ? ctx.lineTo(cx + (x - cx) * k, cy + (y - cy) * k) : ctx.moveTo(cx + (x - cx) * k, cy + (y - cy) * k)));
+        ctx.closePath();
+        ctx.fill();
       } else {
         const rx = 0.5 * t.sizePx * 1.65 * grow * lost;
         ctx.beginPath();

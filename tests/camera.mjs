@@ -11,8 +11,10 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('XNNPACK')) console.log('[error]', m.text().slice(0, 300)); });
-await page.goto('http://127.0.0.1:5421/?delegate=cpu');
+await page.goto(`http://127.0.0.1:5421/?delegate=cpu&engine=${process.env.ENGINE ?? 'mediapipe'}`);
 await page.waitForFunction(() => window.__maskLayer, null, { timeout: 120000 });
+// ENGINE=rtmw3d runs the other engine: wait for it (on the processor here, about two seconds a frame)
+if (process.env.ENGINE === 'rtmw3d') await page.waitForFunction(() => window.__maskLayer.tracker?.kind === 'rtmw3d', null, { timeout: 300000 });
 await page.click('#empty-camera');
 await page.waitForFunction(() => window.__maskLayer.state.kind === 'camera' && window.__maskLayer.state.tracks.length > 0, null, { timeout: 60000 });
 console.log('camera running; mirror:', await page.getAttribute('#mirror', 'aria-pressed'), '| status:', await page.textContent('#status-line'));

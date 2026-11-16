@@ -13,9 +13,14 @@ it never shared anything with the game.
 - MediaPipe Tasks Vision (`@mediapipe/tasks-vision`): face landmarker (478 points, 52 blendshapes, head pose),
   pose landmarker (full), a second face landmarker in image mode for the zoom pass, and the image segmenter with
   the multiclass selfie model (hair, body skin, face skin, clothes, other, background) for the cover.
+- A second tracking engine, chosen under Tracking (`engine` pref, `?engine=rtmw3d`): ONNX Runtime Web
+  (`onnxruntime-web/webgpu`, WebGPU, else wasm) running RTMDet-nano (person boxes) and RTMW3D-L fp32 (133
+  whole-body points with depth per person). Loaded only when chosen; models kept in Cache Storage
+  (`mask-layer-models-v1`). MediaPipe still loads first and its segmenter serves both engines.
 - Mediabunny for reading and writing video through WebCodecs (export and record). Not MediaRecorder.
 - Nothing loads from another host at run time. The MediaPipe wasm runtime and the models are copied or
-  downloaded into `public/` by `scripts/fetch-assets.mjs` on `npm install`; fonts are in `src/fonts/`.
+  downloaded into `public/` by `scripts/fetch-assets.mjs` on `npm install`; fonts are in `src/fonts/`. ONNX
+  Runtime's wasm is bundled by Vite into `dist/assets/`.
 
 ## Commands
 
@@ -39,6 +44,10 @@ src/tracking/landmarkers.js   loads the MediaPipe landmarkers and the segmenter 
 src/tracking/headTracker.js   heads in three states (face / body / hold), the zoom pass, smoothing, when to let go;
                               the whole body under each head (33 joints, camera space, cm); the segment labels
 src/tracking/canonical.js     the head space masks are built in (cm; +X wearer's left, +Y up, +Z out of the face)
+src/tracking/wholeBody.js     the rtmw3d engine's models: download and cache, detect(), estimate() (133 points)
+src/tracking/wholeBodyTracker.js  the rtmw3d engine as a HeadTracker: boxes, matching, head fit, body; async
+src/tracking/headFit.js       head pose from the 68 face points (PnP on MediaPipe's canonical face), expressions
+src/tracking/face68.js        the 68 points on MediaPipe's canonical face (made once from its mesh), normals, ears
 src/body/skeleton.js          the pose joints by name; legs the tracker cannot see eased toward a standing leg
 src/body/puppet.js            the whole-body figure made in code, strung between the wearer's joints
 src/body/rig.js               drives any humanoid skeleton in a .glb from the tracked body (rest pose measured)
@@ -48,7 +57,8 @@ src/render/scenery.js         the stages: sky, floor, dot grid, shadows, a 360 p
 src/masks/                    satyr.js, helm.js, bag.js (made in code), glb.js (imported models), geom.js
 src/export/exporter.js        frame-by-frame export, live recorder, both constant frame rate
 src/storage.js                localStorage under mask-v1.*, imported .glb files in IndexedDB
-public/                       icons, og.jpg, site.webmanifest, LICENSES/, .nojekyll (+ mediapipe/, models/: not in git)
+public/                       icons, og.jpg, site.webmanifest, LICENSES/, .nojekyll (+ mediapipe/, models/: not in git;
+                              models/ holds the 235 MB of the rtmw3d engine too)
 design/                       the jas.black card (1920 x 1008), the picture on it, a loop, the card generator entry
 tests/                        Playwright scripts, see below
 .github/workflows/pages.yml   builds and publishes to GitHub Pages on every push to main
@@ -101,6 +111,8 @@ All need `npm run build`, `npm run preview`, and Playwright with Chromium availa
 - `tests/people.mjs <video> <out> [fps] [every] [max] [head|body]`: on a clip with one person, counts the people
   followed per frame (must be 1) and the frames hidden (must be 0). Run it on a close-up (the comment at its top
   says how to make one): the duplicate-person bug only showed with a person close to the camera.
+- `ENGINE=rtmw3d` before `leak.mjs`, `people.mjs`, `export.mjs` or `camera.mjs` runs them on the other engine. Headless here there is no
+  WebGPU adapter, so it runs on wasm, about 2 s a frame: keep the frame count small.
 
 ## Status
 
@@ -117,19 +129,26 @@ Works (checked in headless Chromium, software rendering, on public sample footag
 - Export: H.264 MP4, constant frame rate, frames in = frames out, sound carried over.
 - Record: H.264 MP4 at a constant 30 frames a second.
 - `.glb` import with ARKit shape keys, fit by points, fit sliders and reset, light and dark, phone width.
+- The rtmw3d engine on wasm (headless, no WebGPU here, about 2 s a frame): profile clip face-locked in 80 of 80
+  frames (MediaPipe falls back to the body there), no face pixels shown on the turning clips, one person in all 100
+  frames of the close-up (head and whole body), export frames in = frames out (on the corridor clip two faces
+  locked in 72 of 120 frames against MediaPipe's 55, body fallback 1 against 22, picture hidden 4 against 6), the
+  live camera loop and switching engines both ways. Head turn in profile about 60 degrees at most, like MediaPipe's.
 
 Known limits:
 
 - A head never detected cannot be covered: people a few pixels tall in the distance are bare until about 10 px.
 - In full profile the face tracker reports about 60 degrees of turn at most, so head masks look three quarters on.
-- A rigged character's fingers are not driven (the pose model has no finger joints): hands stay in their rest pose.
+- A rigged character's fingers are not driven (MediaPipe's pose model has no finger joints): hands stay in their
+  rest pose. The rtmw3d engine reads 21 points per hand; they are not used for fingers yet.
 - Several people: the body tracker follows one body at a time; two people turned away at once trip the hide.
 - Record has no sound. Export holds the whole output in memory, so very long videos may not fit.
 - The Iridescent Satyr is made in code from the character sheet: a stand-in until the sculpt exists as a `.glb`.
 
 Unverified:
 
-- A real camera and a real graphics card (so no real-time frame rate has been measured), Safari, phones. The owner's
+- A real camera and a real graphics card (so no real-time frame rate has been measured), Safari, phones. The rtmw3d
+  engine on WebGPU has never run here (no adapter headless), so its speed on a real graphics card is unknown. The owner's
   own recordings from the live site (camera, Mac) showed the head-only cover was not enough in profile: that is
   what the segmenter cover is for. It has not been seen on a real camera yet.
 - VRM and Ready Player Me files: bone naming is handled, but only Mixamo rigs have been run.
@@ -141,7 +160,8 @@ Unverified:
 - The head pose from a zoomed crop was solved for a camera that sees only the crop. `_zoomIn` converts it: depth
   by the ratio of picture heights, offset by where the crop sits, rotation by the angle between the two lines of
   sight. Skipping the rotation tilts masks near the frame edges.
-- MediaPipe needs timestamps that only go up. The tracker keeps its own clock (`_ts`); never feed it media time.
+- MediaPipe needs timestamps that only go up. The trackers keep their own clock (`_ts`, one `CLOCK` for the page:
+  both engines' trackers feed the one segmenter); never feed it media time.
 - A seek resets the tracker (nobody carries over a jump in time). Tests that step frames by seeking must set
   `state.manual = true`, or every frame is tracked from scratch and the test measures the wrong thing.
 - A body may reclaim a lost head only within reach for how long it has been lost. Without that limit one mask
@@ -154,6 +174,10 @@ Unverified:
   a body is tied to a face by its nose, a new head is only made far from every head already followed, and two
   heads that end up in one place are merged (face beats body beats lost, then the older). Before this, with four
   people allowed, a ghost second head kept hiding the whole picture (the owner's recordings, 0.3.0).
+- RTMW3D places every joint, seen or not, anywhere in its crop. With the body out of the picture (a webcam at a
+  desk) shoulders and hips lean toward a body standing under the head (`asPose`), unseen arms hang and unseen legs
+  stand (`settle`), and the body's distance comes from the fitted head, not from bone lengths. Before that the
+  figure filled the frame or reached for the lens.
 - Joint depths from the pose model's 3D figure are a guess for joints it cannot see. They are held within 70 cm
   of the body and never nearer than 60% of its distance; unchecked, a knee under a desk came out at the lens.
 - Rigs name their spine bones either way up (Meshy: Spine02 is at the hips). `findHumanoid` takes the spine
@@ -170,5 +194,18 @@ Unverified:
   It is switched off on a stage and with the cover set to none (`tracker.wantSegments`).
 - On a stage a figure is rebuilt at the size the pose model measured (it is built in camera space at the tracked
   distance, which is only right over the picture) and kept as far left or right as in the picture.
+- `tracker.update` returns a Promise with the rtmw3d engine (ONNX Runtime answers later) and the tracks with
+  MediaPipe. `tick` handles both: while one frame is being tracked newer ones are skipped (`state.busy`), and a
+  frame is never shown before its tracks. The exporter and the tests `await` it. `WholeBodyTracker` queues its own
+  calls and drops a frame whose answer arrives after a `reset()`.
+- ONNX Runtime's wasm runs on one thread. With threads in a cross-origin-isolated page, the Vite-bundled runtime
+  never finished starting a session, and GitHub Pages cannot isolate a page anyway.
+- Do not set `ort.env.wasm.wasmPaths`: the WebGPU bundle loads `ort-wasm-simd-threaded.asyncify.wasm`, which Vite
+  emits into `assets/`. (The `.jsep` files are for the `ort.all` build, not this one.)
+- RTMW3D's 68 face points are placed in profile too, the hidden side squashed onto the silhouette. `headFit.js`
+  drops points facing away at the fitted turn and fits again, then past 25 degrees refits on the midline, the near
+  side and the near ear. Without that a profile came out about 40 degrees.
+- Playwright: `route.fetch()` on the 230 MB model crashes the test (the body goes through the protocol). Route
+  only documents if a test needs headers.
 - The exporter sets `frameRate` (constant frame rate out). For a steady source that is frame for frame; for a
   variable one frames are repeated or left out to keep the rate. Every frame that is written is masked either way.

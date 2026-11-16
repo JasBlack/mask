@@ -19,8 +19,10 @@ await mkdir(outDir, { recursive: true });
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));
-await page.goto(`http://127.0.0.1:5421/?delegate=cpu${process.env.POSE ? `&pose=${process.env.POSE}` : ''}`);
+await page.goto(`http://127.0.0.1:5421/?delegate=cpu&engine=${process.env.ENGINE ?? 'mediapipe'}${process.env.POSE ? `&pose=${process.env.POSE}` : ''}`);
 await page.waitForFunction(() => window.__maskLayer, null, { timeout: 120000 });
+// ENGINE=rtmw3d runs the other engine: wait for it (on the processor here, about two seconds a frame)
+if (process.env.ENGINE === 'rtmw3d') await page.waitForFunction(() => window.__maskLayer.tracker?.kind === 'rtmw3d', null, { timeout: 300000 });
 await page.evaluate((id) => window.__maskLayer.selectMask(id), mask);
 await page.setInputFiles('#file-input', video);
 await page.waitForFunction(() => window.__maskLayer.state.kind === 'file', null, { timeout: 30000 });
@@ -47,7 +49,7 @@ const result = await page.evaluate(async ({ fps, stride, pose, people, strict, m
   for (let i = 0, n = 0; i < total; i += stride, n++) {
     await seek((i + 0.5) / fps);
     stage.captureFrame(v, w, h);
-    const tracks = tracker.update(stage.frame, w, h, t0 + (i * 1000) / fps);
+    const tracks = await tracker.update(stage.frame, w, h, t0 + (i * 1000) / fps);
     stage.render(tracks, stride / fps);
     const real = truth.face.detect(stage.frame).faceLandmarks;
     let worst = 0;
