@@ -1,8 +1,4 @@
 # Builds Mask Layer and publishes it on GitHub Pages.
-#
-# While ar-mask/ is a folder inside another repository this file does nothing: GitHub only reads workflows from
-# the top of a repository. It starts working when the contents of this folder become a repository of their own.
-#
 # Settings -> Pages -> Source must be "GitHub Actions", and Custom domain "mask.jas.black" with Enforce HTTPS on:
 # browsers only allow the camera on https.
 name: Deploy to GitHub Pages

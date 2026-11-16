@@ -4,8 +4,8 @@ One of the JAS.BLACK tools. Covers faces in a video file or a live camera with a
 In-app title MASK LAYER; on cards and jas.black it is Mask. Version in `<body data-version>` (shown only while the
 title is hovered).
 
-For now this is the folder `ar-mask/` in `JasBlack/ciurlionis-game`. It shares nothing with the game. It is meant
-to become `JasBlack/mask`: put the contents of this folder at the top of that repository.
+Repository `JasBlack/mask`. It began as a folder in `JasBlack/ciurlionis-game` and was moved here with its history;
+it never shared anything with the game.
 
 ## Stack
 
@@ -44,7 +44,7 @@ src/storage.js                localStorage under mask-v1.*, imported .glb files 
 public/                       icons, og.jpg, site.webmanifest, LICENSES/, .nojekyll (+ mediapipe/, models/: not in git)
 design/                       the jas.black card (1920 x 1008), the picture on it, a loop, the card generator entry
 tests/                        Playwright scripts, see below
-.github/workflows/pages.yml   builds and publishes to GitHub Pages. Inert until this folder is its own repository
+.github/workflows/pages.yml   builds and publishes to GitHub Pages on every push to main
 ```
 
 ## Design
@@ -76,7 +76,7 @@ GitHub Pages through `.github/workflows/pages.yml` (Settings, Pages, Source "Git
 `mask.jas.black` (`CNAME`), DNS `CNAME mask -> jasblack.github.io`, Enforce HTTPS on (camera and WebCodecs need a
 secure context). On CI a model that cannot be downloaded fails the build.
 
-Still to do on jas.black (repo `jas-black`, not reachable from here): the entry in `site/content.js`, the card
+Still to do on jas.black (repo `jas-black`): the entry in `site/content.js`, the card
 as `site/tools/media/mask.webp`, the icon in `site/tools/icons/`, and the loop from `design/`.
 
 ## Tests
@@ -113,7 +113,7 @@ Known limits:
 Unverified:
 
 - A real camera and a real graphics card (so no real-time frame rate has been measured), Safari, phones.
-- The Pages workflow has not run: it cannot until the repository exists.
+- The published site at mask.jas.black: it needs Pages switched on and the DNS record first (see Deployment).
 
 ## Gotchas
 

@@ -3,9 +3,7 @@
 Cover your face in any video or live feed with a tracked 3D mask, so you can publish real footage without
 showing who you are. It runs entirely in the browser: the video never leaves your computer.
 
-One of the JAS.BLACK tools, meant to live at [mask.jas.black](https://mask.jas.black). For now it is a folder in
-the game's repository; it shares nothing with the game and is ready to be a repository of its own (see
-"Publish it").
+One of the JAS.BLACK tools, at [mask.jas.black](https://mask.jas.black).
 
 ## Use it
 
@@ -141,15 +139,11 @@ static site to `dist/`. The camera needs `https://` or `localhost`.
 It is a static site with no server side. Published, it still does all its work in the visitor's browser: the
 page, the tracker and the models are downloaded once (about 28 MB, then cached), and no video goes back.
 
-GitHub Pages gives one site and one address per repository, so `mask.jas.black` needs a repository of its own,
-`JasBlack/mask`, like the other tools:
+Every push to `main` is built and published by `.github/workflows/pages.yml`. The repository needs, once:
 
-1. Create the empty repository and put the contents of this folder at its top (not the folder itself). The
-   workflow in `.github/workflows/pages.yml` and the `CNAME` file come with it.
-2. In the repository: Settings, Pages, Source "GitHub Actions". Custom domain `mask.jas.black`, and once the
-   certificate is issued, Enforce HTTPS (the camera needs it).
-3. At the DNS host for `jas.black`: a `CNAME` record for `mask` pointing at `jasblack.github.io`.
-4. Push to `main`. The workflow installs, downloads the models, builds and publishes.
+1. Settings, Pages, Source "GitHub Actions". Custom domain `mask.jas.black`, and once the certificate is issued,
+   Enforce HTTPS (the camera needs it).
+2. At the DNS host for `jas.black`: a `CNAME` record for `mask` pointing at `jasblack.github.io`.
 
 For the card on jas.black, `design/` has the 1920 x 1008 card, the picture on it, a short loop of the mask
 turning, and the entry for the card generator.
