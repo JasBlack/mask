@@ -109,8 +109,9 @@ Works (checked in headless Chromium, software rendering, on public sample footag
 - Face lock, body fallback in profile and turned away, zoom pass for small faces, hold and whole-picture hide.
 - The cover takes whole heads (hair, beards, bald scalps, the back of the head in profile) and, in whole-body mode,
   whole people, also people who are not tracked. Checked by eye on the test clips, mask off.
-- Whole-body figure and rigged characters (Mixamo test models from the three.js examples), over the camera and
-  on a stage.
+- Whole-body figure and rigged characters (Mixamo test models from the three.js examples, and a Meshy
+  "biped"), over the camera and on a stage.
+- Live at mask.jas.black: Pages from the workflow, custom domain, HTTPS.
   Single person: no dropped mask and no face pixels shown across 528 frames of head turns, also with two of every
   three frames skipped.
 - Export: H.264 MP4, constant frame rate, frames in = frames out, sound carried over.
@@ -132,7 +133,6 @@ Unverified:
   own recordings from the live site (camera, Mac) showed the head-only cover was not enough in profile: that is
   what the segmenter cover is for. It has not been seen on a real camera yet.
 - VRM and Ready Player Me files: bone naming is handled, but only Mixamo rigs have been run.
-- The published site at mask.jas.black: it needs Pages switched on and the DNS record first (see Deployment).
 
 ## Gotchas
 
