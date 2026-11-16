@@ -61,6 +61,7 @@ export async function exportFile(file, { tracker, stage, keepAudio = true, onPro
   const prevMode = tracker.poseMode;
   tracker.poseMode = 'always';
   tracker.reset();
+  stage.forget?.();
   const base = performance.now();
   let frames = 0, lastT = null;
   const log = [];

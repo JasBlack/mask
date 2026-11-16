@@ -1,12 +1,14 @@
 // Loads MediaPipe's face and pose landmarkers. The wasm runtime and both models are served from this app's own
 // folder (scripts/fetch-assets.mjs puts them there); only if a model is missing is it fetched from Google's host.
-import { FilesetResolver, FaceLandmarker, PoseLandmarker } from '@mediapipe/tasks-vision';
+import { FilesetResolver, FaceLandmarker, PoseLandmarker, ImageSegmenter } from '@mediapipe/tasks-vision';
 
 const REMOTE = 'https://storage.googleapis.com/mediapipe-models/';
 const MODELS = {
   face: ['models/face_landmarker.task', `${REMOTE}face_landmarker/face_landmarker/float16/1/face_landmarker.task`],
   pose: ['models/pose_landmarker_full.task', `${REMOTE}pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task`],
   poseLite: ['models/pose_landmarker_lite.task', `${REMOTE}pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`],
+  // every pixel as background, hair, body skin, face skin, clothes or other: what the cover hides
+  segments: ['models/selfie_multiclass_256x256.tflite', `${REMOTE}image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite`],
 };
 
 async function modelUrl([local, remote]) {
@@ -28,11 +30,11 @@ function blankCanvas() {
 
 /**
  * @param {{ maxPeople?: number, delegate?: 'GPU' | 'CPU', runningMode?: 'VIDEO' | 'IMAGE', pose?: 'full' | 'lite' }} opts
- * @returns {Promise<{ face: FaceLandmarker, pose: PoseLandmarker, zoom: FaceLandmarker, delegate: string, localModels: boolean }>}
+ * @returns {Promise<{ face: FaceLandmarker, pose: PoseLandmarker, zoom: FaceLandmarker, segments: ImageSegmenter, delegate: string, localModels: boolean }>}
  */
 export async function createLandmarkers({ maxPeople = 1, delegate = 'GPU', runningMode = 'VIDEO', pose = 'full' } = {}) {
   const fileset = await FilesetResolver.forVisionTasks(new URL('mediapipe/wasm', document.baseURI).href);
-  const [faceModel, poseModel] = await Promise.all([modelUrl(MODELS.face), modelUrl(pose === 'lite' ? MODELS.poseLite : MODELS.pose)]);
+  const [faceModel, poseModel, segModel] = await Promise.all([modelUrl(MODELS.face), modelUrl(pose === 'lite' ? MODELS.poseLite : MODELS.pose), modelUrl(MODELS.segments)]);
 
   const build = async (which) => {
     // Low thresholds on purpose: a shaky lock on a turned head is better than no lock, because the
@@ -65,11 +67,18 @@ export async function createLandmarkers({ maxPeople = 1, delegate = 'GPU', runni
       minFaceDetectionConfidence: 0.3,
       minFacePresenceConfidence: 0.3,
     });
+    const segments = await ImageSegmenter.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: segModel.url, delegate: which },
+      runningMode,
+      outputCategoryMask: true,
+      outputConfidenceMasks: false,
+    });
     // One real inference each, so a graphics delegate that loads but cannot run is found out here.
     const probe = blankCanvas();
     if (runningMode === 'VIDEO') { face.detectForVideo(probe, 1); body.detectForVideo(probe, 1); } else { face.detect(probe); body.detect(probe); }
     zoom.detect(probe);
-    return { face, pose: body, zoom };
+    if (runningMode === 'VIDEO') segments.segmentForVideo(probe, 1).close?.(); else segments.segment(probe).close?.();
+    return { face, pose: body, zoom, segments };
   };
 
   let made;
@@ -82,5 +91,5 @@ export async function createLandmarkers({ maxPeople = 1, delegate = 'GPU', runni
     used = 'CPU';
     made = await build('CPU');
   }
-  return { ...made, delegate: used, localModels: faceModel.local && poseModel.local };
+  return { ...made, delegate: used, localModels: faceModel.local && poseModel.local && segModel.local };
 }

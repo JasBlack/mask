@@ -384,5 +384,6 @@ export const satyr = {
   name: 'Iridescent Satyr',
   note: 'Procedural stand-in for the character sheet',
   swatch: ['#7f86ea', '#33283a', '#ff9638'],
+  body: 'pearl', // what the figure under it is made of, when a whole body is wanted
   create,
 };

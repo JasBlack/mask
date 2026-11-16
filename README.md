@@ -1,7 +1,7 @@
 # Mask Layer
 
-Cover your face in any video or live feed with a tracked 3D mask, so you can publish real footage without
-showing who you are. It runs entirely in the browser: the video never leaves your computer.
+Cover yourself in any video or live feed with a tracked 3D mask or a whole character, so you can publish real
+footage without showing who you are. It runs entirely in the browser: the video never leaves your computer.
 
 One of the JAS.BLACK tools, at [mask.jas.black](https://mask.jas.black).
 
@@ -14,30 +14,52 @@ On the left:
 
 - **Source.** `open video`, or drop a video anywhere on the page, or start the `camera`. `mirror` flips the
   picture left to right (on for a camera, off for a video).
-- **Mask.** Pick one of the three, or drop a `.glb` head model on the page to add your own. Your own masks are
-  remembered in this browser. `show mask` off leaves only the cover.
-- **Cover.** What hides the face itself under the mask: `pixels`, `paint`, `blur` or `none`. With a cover on, a
-  gap in a mask (an open mouth, a thin model, a poor fit) shows the cover, never skin. `hide picture if a head is
-  lost` hides everything whenever a head that was just there cannot be found.
-- **Save.** `export video` writes the file again with a mask on every frame and carries the sound over (turn
-  `keep sound` off if your voice matters). `record` saves the picture as you see it, without sound. Both write
-  MP4 (H.264) at a constant frame rate.
+- **Character.** Pick one, and `head` (a mask on the head) or `whole body` (a figure from head to foot, strung
+  between your own joints so it has your height and reach). Drop a `.glb` on the page to add your own: a head
+  model becomes a mask; a rigged character (Mixamo, VRM, Ready Player Me, and most humanoid skeletons) moves with
+  your whole body. Your own characters are remembered in this browser. `show character` off leaves only the cover.
+- **Scene.** `camera` keeps the real picture, with the character over you. `stage` puts the character in a
+  simulated place (`void`, `studio`, `dusk`), and nothing of the real picture is shown. Drop a 360 picture (2:1)
+  on the page to stand in that instead.
+- **Cover.** What hides the real person under the character: `pixels`, `erase`, `paint`, `blur` or `none`. It
+  covers all of a head: hair, beard, a bald scalp, ears, the back of the head in profile. In whole-body mode it
+  covers the whole person. `erase` paints in the place as it looks with nobody there, learned as the video runs,
+  so it needs a camera that stays put. `hide picture if a head is lost` hides everything whenever a head that was
+  just there cannot be found.
+- **Save.** `export video` writes the file again with the character on every frame and carries the sound over
+  (turn `keep sound` off if your voice matters). `record` saves the picture as you see it, without sound. Both
+  write MP4 (H.264) at a constant frame rate.
 
 On the right:
 
-- **Fit.** Size, place, turn and stretch of the mask, remembered per mask. Right-click a slider to put it back.
-  `fit by points` shows three pins where your own eyes and mouth sit behind the mask; drag each onto that part of
-  the mask and it is resized and moved to match. `head outline` draws a wire head, to see whether the mask
+- **Fit.** Size, place, turn and stretch of a head mask, remembered per mask. Right-click a slider to put it
+  back. `fit by points` shows three pins where your own eyes and mouth sit behind the mask; drag each onto that
+  part of the mask and it is resized and moved to match. `head outline` draws a wire head, to see whether the mask
   encloses it.
-- **Tracking.** How far the cover reaches past the face, how many people to cover, and the tracking points.
+- **Body.** How thick the whole-body figure is, or how big a rigged character is.
+- **Tracking.** How far the cover reaches, how many people to cover (four unless you choose), and the tracking
+  points.
 - **Picture.** A look for the whole picture.
 
 The lights by the title: `live` is a source running; `lock` is green while the face is tracked and violet while
 the mask is following the head from the body (in profile, or turned away); `rec` is recording. The green line
 under the picture says the same in words.
 
-Keys: `Space` pause, `E` export, `R` record, `M` mirror, `F` full screen. `guide` in the top bar is the short
-version of this section; the key beside it switches light and dark.
+Keys: `Space` pause, `E` export, `R` record, `B` whole body, `V` stage, `M` mirror, `F` full screen. `guide` in
+the top bar is the short version of this section; the key beside it switches light and dark.
+
+## How the cover finds a whole head
+
+A face tracker only knows a face: hair, a beard, a bald scalp and the back of the head are not part of it. So
+the cover is three things at once, and each covers what the others miss:
+
+1. **Every pixel labelled hair or face skin.** A segmentation model labels each pixel of the picture as hair,
+   face skin, body skin, clothes or background. The cover takes all the hair and face skin, and the skin touching
+   them, then widens it a little. This is not tied to the tracked people: anyone whose hair or face it sees is
+   covered. In whole-body mode it takes every pixel of a person.
+2. **A solid head where the tracked head is.** A skull and jaw in 3D, turned and placed as the head is, and drawn
+   where they fall in the picture. It covers a head the model mislabels, and the back of the head in profile.
+3. **The face and the body's limbs**, outlined from the tracker's own points.
 
 ## Why the mask does not flicker off
 
@@ -73,6 +95,10 @@ the edge.
   about 10 pixels across.
 - More than one person works best when faces are visible: the body tracker tends to follow one body at a time,
   so two people who both turn away at once will often trip the whole-picture hide.
+- Someone blurred by fast movement right at the edge of the frame can be missed by all three covers for a few
+  frames. With `hide picture if a head is lost` on, those frames are hidden whole; with it off, they may show.
+- In full profile the face tracker reports the head turned only about 60 degrees, so a head mask looks three
+  quarters on. The cover still takes the whole head.
 - It hides the head. Voice, body, clothes, tattoos, the room and the file's metadata still identify people. Turn
   `keep sound` off if your voice matters.
 - **Watch every export through once before publishing it.** The note under Save says after an export on how
@@ -131,13 +157,13 @@ npm run dev
 ```
 
 Then open `http://localhost:5420` in Chrome or Edge. `npm install` also copies the tracker's runtime out of
-`node_modules` and downloads its two model files (about 13 MB) into `public/`, once. `npm run build` writes the
+`node_modules` and downloads its three model files (about 30 MB) into `public/`, once. `npm run build` writes the
 static site to `dist/`. The camera needs `https://` or `localhost`.
 
 ## Publish it
 
 It is a static site with no server side. Published, it still does all its work in the visitor's browser: the
-page, the tracker and the models are downloaded once (about 28 MB, then cached), and no video goes back.
+page, the tracker and the models are downloaded once (about 45 MB, then cached), and no video goes back.
 
 Every push to `main` is built and published by `.github/workflows/pages.yml`. The repository needs, once:
 

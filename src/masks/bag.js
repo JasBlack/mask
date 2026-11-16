@@ -76,5 +76,6 @@ export const bag = {
   name: 'Paper Bag',
   note: 'Drawn face that blinks and talks',
   swatch: ['#b98f5c', '#1c1410', '#b98f5c'],
+  body: 'paper', // what the figure under it is made of, when a whole body is wanted
   create,
 };

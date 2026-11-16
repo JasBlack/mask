@@ -57,6 +57,8 @@ class Track {
     this.heldMs = 0;
     this.depthK = 1;
     this.snap = true;
+    /** The whole body under this head, when the tracker is asked for bodies: see HeadTracker._followBody. */
+    this.body = null;
     this.fXY = new OneEuro(2);
     this.fZ = new OneEuro(1);
     this.fQ = new OneEuro(4);
@@ -65,10 +67,17 @@ class Track {
 }
 
 export class HeadTracker {
-  constructor({ face, pose, zoom }) {
+  constructor({ face, pose, zoom, segments }) {
     this.face = face;
     this.pose = pose;
     this.zoom = zoom;
+    this.segmenter = segments;
+    /** Label every pixel too (hair, skin, clothes ...): what the cover hides. Off when nothing will be covered. */
+    this.wantSegments = !!segments;
+    this.segCanvas = document.createElement('canvas');
+    this.segCtx = this.segCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
+    /** The last labelling: { classes: Uint8Array, w, h } in a small copy of the picture, or null. */
+    this.segments = null;
     this.zoomCanvas = document.createElement('canvas');
     this.zoomCanvas.width = this.zoomCanvas.height = 320;
     this.zoomCtx = this.zoomCanvas.getContext('2d', { alpha: false });
@@ -88,7 +97,9 @@ export class HeadTracker {
     this.closedEmptyHoldMs = 2000;
     /** 'auto': the body tracker runs only when a face is missing. 'always': every frame (export). 'off'. */
     this.poseMode = 'auto';
-    this.stats = { faceMs: 0, poseMs: 0, ranPose: false, zooms: 0 };
+    /** Follow whole bodies, not only heads: the body tracker then runs on every frame and each head carries a body. */
+    this.wantBody = false;
+    this.stats = { faceMs: 0, poseMs: 0, ranPose: false, zooms: 0, segMs: 0 };
     this._nextId = 1;
     this._ts = 10;
     this._lastT = null;
@@ -105,6 +116,30 @@ export class HeadTracker {
   reset() {
     this.tracks.length = 0;
     this._lastT = null;
+    this.segments = null;
+  }
+
+  /** Label every pixel of a small copy of the picture: 0 background, 1 hair, 2 body skin, 3 face skin, 4 clothes, 5 other. */
+  _segment(image, w, h) {
+    if (!this.wantSegments || !this.segmenter) { this.segments = null; return; }
+    const t0 = performance.now();
+    const sw = Math.min(w, 384), sh = Math.max(1, Math.round((h * sw) / w));
+    const c = this.segCanvas;
+    if (c.width !== sw || c.height !== sh) { c.width = sw; c.height = sh; }
+    this.segCtx.drawImage(image, 0, 0, sw, sh);
+    const r = this.segmenter.segmentForVideo(c, this._ts);
+    const mask = r.categoryMask;
+    if (mask) {
+      const data = mask.getAsUint8Array();
+      const seg = (this.segments?.classes?.length === data.length) ? this.segments : { classes: new Uint8Array(data.length), w: mask.width, h: mask.height };
+      seg.classes.set(data);
+      seg.w = mask.width; seg.h = mask.height;
+      this.segments = seg;
+    } else {
+      this.segments = null;
+    }
+    r.close?.();
+    this.stats.segMs = performance.now() - t0;
   }
 
   /**
@@ -185,7 +220,9 @@ export class HeadTracker {
     const faceless = this.tracks.filter((t) => !faceOf.has(t));
     let persons = null;
     // With nobody locked the body tracker runs on every frame: it is what catches a head that comes in turned away.
-    const wantPose = this.poseMode === 'always' || (this.poseMode === 'auto' && (faceless.length > 0 || dets.length === 0));
+    const wantPose = this.poseMode === 'always' || this.wantBody
+      || (this.poseMode === 'auto' && (faceless.length > 0 || dets.length === 0));
+    const bodyOf = new Map(); // which body in this frame belongs to which head
     this.stats.ranPose = wantPose;
     if (wantPose) {
       t0 = performance.now();
@@ -194,12 +231,15 @@ export class HeadTracker {
       persons = [];
       for (let i = 0; i < pr.landmarks.length; i++) {
         const p = headFromPose(pr.landmarks[i], pr.worldLandmarks[i], w, h);
-        if (p) persons.push(p);
+        if (p) { p.lm = pr.landmarks[i]; p.world = pr.worldLandmarks[i]; persons.push(p); }
       }
-      // a body whose head already has a face lock needs nothing more
+      // a body whose head already has a face lock has nothing more to say about the head
       for (const p of persons) {
-        for (const [, d] of faceOf) {
-          if (Math.hypot(p.cx - d.cx, p.cy - d.cy) < 0.9 * Math.max(p.size, d.size)) p.used = true;
+        for (const [t, d] of faceOf) {
+          if (Math.hypot(p.cx - d.cx, p.cy - d.cy) < 0.9 * Math.max(p.size, d.size)) {
+            p.used = true;
+            if (!bodyOf.has(t)) bodyOf.set(t, p);
+          }
         }
       }
     }
@@ -218,7 +258,7 @@ export class HeadTracker {
             const cost = Math.hypot(t.cx - p.cx, t.cy - p.cy) / Math.max(t.sizePx, p.size, 1);
             if (cost < cost0) { cost0 = cost; body = p; }
           }
-          if (body) body.used = true;
+          if (body) { body.used = true; bodyOf.set(t, body); }
         }
         // look closer, where the body says the head is or where the head was last
         const lostFor = body ? 0 : (tMs - t.lastSeen) / 1000;
@@ -230,6 +270,8 @@ export class HeadTracker {
         t.landmarks = d.lm;
         t.cx = d.cx; t.cy = d.cy; t.sizePx = d.size;
         t.lastSeen = tMs; t.heldMs = 0;
+        _v.copy(EAR_MID).multiplyScalar(t.scale).applyQuaternion(t.quat).add(t.pos);
+        t.faceDepth = -_v.z; t.faceSeen = tMs;
         blendToward(t.blend, d.blend, dt);
         continue;
       }
@@ -270,6 +312,7 @@ export class HeadTracker {
         }
         if (!lost) continue;
         p.used = true;
+        bodyOf.set(lost, p);
         lost.reclaimed = true;
         lost.snap = true;
         this._measure(lost, this._bodyPose(lost, p, w, h, f), BODY, dt);
@@ -285,6 +328,7 @@ export class HeadTracker {
         if (p.used || p.vis < 0.4 || this.tracks.length >= this.maxPeople * 2) continue;
         const t = new Track(this._nextId++, tMs);
         this.tracks.push(t);
+        bodyOf.set(t, p);
         this._measure(t, this._bodyPose(t, p, w, h, f), BODY, dt);
         t.cx = p.cx; t.cy = p.cy; t.sizePx = p.size;
         const d = this._zoomIn(image, p, 0, w, h, f, claimed);
@@ -299,6 +343,12 @@ export class HeadTracker {
       }
     }
 
+    // ---- the whole body under each head, when asked for
+    for (const t of this.tracks) this._followBody(t, bodyOf.get(t), w, h, f, dt, tMs);
+
+    // ---- every pixel labelled, for the cover
+    this._segment(image, w, h);
+
     // ---- let go only on evidence, or after the full hold
     this.tracks = this.tracks.filter((t) => {
       if (t.state !== HOLD) return true;
@@ -309,7 +359,57 @@ export class HeadTracker {
           : (this.failClosed ? this.closedHoldMs : this.holdMs);
       return t.heldMs <= limit;
     });
+    this.tracks.segments = this.segments;
     return this.tracks;
+  }
+
+  /**
+   * Keep the body under a head as 33 joints in the camera's own space (cm), for a character to be hung on.
+   * Each joint is put on the line of sight through its place in the picture, so drawn with the same camera it
+   * falls exactly on the person; how far along that line comes from the pose model's own 3D figure. A frame with
+   * no body leaves the last one as it was: like a head, a body is not dropped for want of one frame.
+   */
+  _followBody(t, p, w, h, f, dt, tMs) {
+    if (!this.wantBody) { t.body = null; return; }
+    if (!p) { if (t.body) t.body.age = tMs - t.body.seen; return; }
+    const b = (t.body ??= newBody());
+    const fresh = b.seen === 0 || tMs - b.seen > 500;
+    for (let i = 0; i < 33; i++) {
+      const l = p.lm[i], g = p.world[i];
+      const px = [l.x * w, l.y * h];
+      const wd = [g.x, -g.y, -g.z]; // pose world space is x right, y down, z away: turn it to the camera's
+      if (fresh) { b.fPx[i].reset(px); b.fW[i].reset(wd); }
+      const a = b.fPx[i].filter(px, dt);
+      b.px[i * 2] = a[0]; b.px[i * 2 + 1] = a[1];
+      const c = b.fW[i].filter(wd, dt);
+      b.world[i * 3] = c[0]; b.world[i * 3 + 1] = c[1]; b.world[i * 3 + 2] = c[2];
+      b.vis[i] = l.visibility ?? 1;
+    }
+    // how far away: picture pixels per metre of the model's own figure, over the pairs it is surest of
+    let num = 0, den = 0;
+    for (const [i, j] of BODY_PAIRS) {
+      const wgt = Math.min(b.vis[i], b.vis[j]) ** 2 + 0.01;
+      num += wgt * Math.hypot(b.px[i * 2] - b.px[j * 2], b.px[i * 2 + 1] - b.px[j * 2 + 1]);
+      den += wgt * Math.hypot(b.world[i * 3] - b.world[j * 3], b.world[i * 3 + 1] - b.world[j * 3 + 1]);
+    }
+    if (!(den > 1e-4) || !(num > 1)) return;
+    let depth = (100 * f * den) / num;
+    if (fresh) b.fD.reset([depth]); else depth = b.fD.filter([depth], dt)[0];
+    b.hipsSeen = Math.min(b.vis[23], b.vis[24]) > (b.hipsSeen ? 0.35 : 0.6);
+    const [i0, i1] = b.hipsSeen ? [23, 24] : [11, 12];
+    const z0 = (b.world[i0 * 3 + 2] + b.world[i1 * 3 + 2]) / 2;
+    // the head and the body are measured separately; bring the body to the head's distance so they join.
+    // Scaling about the camera moves nothing in the picture.
+    const earDepth = depth - ((b.world[7 * 3 + 2] + b.world[8 * 3 + 2]) / 2 - z0) * 100;
+    _v.copy(EAR_MID).multiplyScalar(t.scale).applyQuaternion(t.quat).add(t.pos);
+    const k = THREE.MathUtils.clamp(-_v.z / Math.max(earDepth, 1), 0.6, 1.7);
+    b.k = fresh ? k : b.k + (k - b.k) * (1 - Math.exp(-dt / 0.4));
+    for (let i = 0; i < 33; i++) {
+      const d = (depth - (b.world[i * 3 + 2] - z0) * 100) * b.k;
+      b.joints[i].set(((b.px[i * 2] - w / 2) * d) / f, (-(b.px[i * 2 + 1] - h / 2) * d) / f, -d);
+    }
+    b.seen = tMs;
+    b.age = 0;
   }
 
   /**
@@ -371,6 +471,13 @@ export class HeadTracker {
       t.depthK = THREE.MathUtils.clamp(-_v.z / depth, 0.5, 2);
     }
     depth *= t.depthK;
+    // The face's own measure of distance is the better one. For a while after it is lost the head is held near
+    // that distance: a body's measure jumps when its shoulders leave the frame, and with it the size of the mask.
+    if (t.faceDepth) {
+      const since = (t.lastSeen - t.faceSeen) / 1000;
+      const slack = 0.12 + 0.1 * Math.max(0, since);
+      depth = THREE.MathUtils.clamp(depth, t.faceDepth * (1 - slack), t.faceDepth * (1 + slack));
+    }
     const pos = new THREE.Vector3((p.cx - w / 2) * depth / f, -(p.cy - h / 2) * depth / f, -depth);
     pos.sub(_v.copy(EAR_MID).applyQuaternion(p.quat));
     return { pos, quat: p.quat, scale: 1 };
@@ -450,6 +557,27 @@ function headFromPose(lm, wl, w, h) {
     }
   }
   return { cx, cy, size, quat, vis: (nose.v + le.v + re.v) / 3, used: false };
+}
+
+// pairs of pose points used to judge how big a body is in the picture: trunk, shoulders to head, upper limbs
+const BODY_PAIRS = [[11, 12], [23, 24], [11, 23], [12, 24], [11, 24], [12, 23], [0, 11], [0, 12], [7, 8], [11, 13], [12, 14], [23, 25], [24, 26]];
+
+function newBody() {
+  return {
+    /** 33 joints in the camera's space, cm. Indices are MediaPipe's pose landmarks (11/12 shoulders, 23/24 hips ...). */
+    joints: Array.from({ length: 33 }, () => new THREE.Vector3()),
+    /** The same joints in the picture, pixels (x0, y0, x1, y1 ...), and how sure the model is of each. */
+    px: new Float32Array(66),
+    vis: new Float32Array(33),
+    world: new Float32Array(99),
+    hipsSeen: false,
+    k: 1,
+    seen: 0,
+    age: 0,
+    fPx: Array.from({ length: 33 }, () => new OneEuro(2, { minCutoff: 2.2, beta: 0.015 })),
+    fW: Array.from({ length: 33 }, () => new OneEuro(3, { minCutoff: 1.6, beta: 3 })),
+    fD: new OneEuro(1, { minCutoff: 0.6 }),
+  };
 }
 
 function blendToward(blend, cats, dt) {

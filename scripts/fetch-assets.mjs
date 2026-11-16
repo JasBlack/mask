@@ -1,5 +1,5 @@
 // Puts everything the tracker needs next to the app, so that at run time nothing is fetched from another host:
-// the MediaPipe wasm runtime (copied out of node_modules) and the two model files (downloaded once).
+// the MediaPipe wasm runtime (copied out of node_modules) and the model files (downloaded once).
 import { mkdir, copyFile, stat, writeFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -14,6 +14,8 @@ const MODELS = {
     'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
   'pose_landmarker_full.task':
     'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
+  'selfie_multiclass_256x256.tflite':
+    'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite',
 };
 
 const exists = async (p) => { try { return (await stat(p)).size > 0; } catch { return false; } };

@@ -70,5 +70,6 @@ export const helm = {
   name: 'Chrome Helm',
   note: 'Closed mirror helmet',
   swatch: ['#d6daea', '#07070d', '#8ff6ff'],
+  body: 'chrome', // what the figure under it is made of, when a whole body is wanted
   create,
 };

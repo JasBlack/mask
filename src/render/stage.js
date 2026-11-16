@@ -1,12 +1,16 @@
-// Draws one finished frame: the video frame that was analysed, a privacy patch over each head, the 3D masks.
+// Draws one finished frame. Over the camera's picture: the video frame that was analysed, a cover over each
+// person, then the masks and bodies. On a stage: a simulated place with the figures in it, and none of the picture.
 //
 // The order matters for the promise the app makes. The frame is copied once into `frame`; the tracker reads that
 // copy, and the picture is composed from that same copy. So a mask can never be late for its frame, and no frame
 // reaches the screen or a recording before its masks are on it.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { FOV_DEG, FACE_OVAL, HEAD_PROXY, CANON } from '../tracking/canonical.js';
+import { FOV_DEG, HEAD_PROXY, CANON } from '../tracking/canonical.js';
 import { FACE, HOLD } from '../tracking/headTracker.js';
+import { createPuppet } from '../body/puppet.js';
+import { Cover } from './cover.js';
+import { Scenery } from './scenery.js';
 
 export const LOOKS = {
   none: 'none',
@@ -54,8 +58,15 @@ export class Stage {
 
     this.camera = new THREE.PerspectiveCamera(FOV_DEG, 1, 1, 4000);
 
+    this.cover = new Cover();
+    this.scenery = new Scenery();
+    this.scene.add(this.scenery.group);
+
     this.settings = {
-      underlay: 'pixelate', // 'pixelate' | 'solid' | 'blur' | 'off'
+      character: 'head', // 'head': a mask on the head. 'body': a whole figure, head to foot
+      scene: 'camera', // 'camera': over the real picture. 'stage': in a simulated place, nothing real shown
+      build: 1, // how thick the figure is
+      underlay: 'pixelate', // 'pixelate' | 'solid' | 'blur' | 'erase' | 'off'
       underlayColor: '#0b0b0c',
       margin: 1,
       strict: true,
@@ -71,6 +82,7 @@ export class Stage {
     /** Colours drawn into the picture. The page hands over the family's tokens with setPalette(). */
     this.palette = { accent: '#39ff88', accent2: '#b36bff', stage: '#0b0b0c' };
     this.time = 0;
+    this._learnTick = 0;
     /** What the last frame did, for the status line and for tests. */
     this.report = { heads: 0, hidden: false };
   }
@@ -100,8 +112,11 @@ export class Stage {
     const dist = (Math.max(span.x, span.y) / 2 / Math.tan((14 * Math.PI) / 180)) * 1.08 + span.z / 2;
     cam.position.set(centre.x, centre.y + dist * 0.06, centre.z + dist);
     cam.lookAt(centre);
-    const hidden = [...this.slots.values()].map((slot) => slot.root).filter((root) => root.visible);
+    const hidden = [...this.slots.values()].map((slot) => slot.group).filter((root) => root.visible);
     for (const root of hidden) root.visible = false;
+    this.scenery.group.visible = false;
+    this.scene.background = null;
+    this.scene.fog = null;
     this.scene.add(holder);
     this.renderer.setSize(size, size, false);
     this.renderer.render(this.scene, cam);
@@ -121,8 +136,15 @@ export class Stage {
     this.frame.width = w; this.frame.height = h;
     this.out.width = w; this.out.height = h;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
+    this.camera.aspect = this.scenery.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.scenery.camera.updateProjectionMatrix();
+    this.cover.resize(w, h);
+  }
+
+  /** A new source or a jump in time: the empty place learned for `erase` belongs to the old picture. */
+  forget() {
+    this.cover.reset();
   }
 
   /** Copy the source's current picture. Everything after this works from the copy. */
@@ -160,6 +182,8 @@ export class Stage {
   _slot(id) {
     let slot = this.slots.get(id);
     if (slot) return slot;
+    // everything of one person hangs in one group, so the whole of them can be stood on a stage together
+    const group = new THREE.Group();
     const root = new THREE.Group();
     root.matrixAutoUpdate = false;
     const fit = new THREE.Group();
@@ -168,16 +192,29 @@ export class Stage {
     if (mask) fit.add(mask.object);
     const guide = makeGuide(this.palette.accent2);
     root.add(guide);
-    this.scene.add(root);
-    slot = { root, fit, mask, guide, lastQuat: null, angVel: new THREE.Vector3() };
+    group.add(root);
+    this.scene.add(group);
+    slot = { group, root, fit, mask, guide, body: null, shadow: null, hipHeight: 0, lastQuat: null, angVel: new THREE.Vector3() };
     this._applyFit(slot);
     this.slots.set(id, slot);
     return slot;
   }
 
+  /** The figure under (or instead of) the head: a rigged character if that is what is chosen, else the lay figure. */
+  _figure(slot) {
+    if (!slot.body) {
+      slot.body = this.maskDef?.kind === 'rig' ? this.maskDef.createBody() : createPuppet(this.maskDef?.body ?? 'pearl');
+      slot.body.object.traverse((o) => { o.frustumCulled = false; });
+      slot.group.add(slot.body.object);
+    }
+    return slot.body;
+  }
+
   _dropSlot(slot) {
-    this.scene.remove(slot.root);
+    this.scene.remove(slot.group);
     slot.mask?.dispose?.();
+    slot.body?.dispose?.();
+    slot.shadow?.material.dispose();
     slot.guide.geometry.dispose();
     slot.guide.material.dispose();
   }
@@ -191,16 +228,19 @@ export class Stage {
     const { w, h, octx, settings } = this;
     if (!w) return;
     this.time += dt;
+    const rig = this.maskDef?.kind === 'rig';
+    const whole = rig || settings.character === 'body';
+    const staged = settings.scene === 'stage';
 
-    // ---- 3D: one mask per head
+    // ---- 3D: a mask on each head, and under it a body where one is wanted and tracked
     const live = new Set();
     for (const t of tracks) {
       live.add(t.id);
       const slot = this._slot(t.id);
       slot.root.matrix.compose(t.pos, t.quat, _s.setScalar(t.scale));
       slot.root.matrixWorldNeedsUpdate = true;
-      slot.fit.visible = settings.showMask;
-      slot.guide.visible = settings.showGuide;
+      slot.fit.visible = settings.showMask && !rig;
+      slot.guide.visible = settings.showGuide && !staged;
       // how fast the head is turning, in its own axes: the masks use it for follow-through
       if (slot.lastQuat && dt > 0) {
         _q.copy(_qPrev.copy(slot.lastQuat).invert()).multiply(t.quat);
@@ -210,15 +250,66 @@ export class Stage {
       }
       (slot.lastQuat ??= new THREE.Quaternion()).copy(t.quat);
       slot.mask?.update?.({ dt, time: this.time, blend: t.blend, state: t.state, angVel: slot.angVel });
+
+      // the figure is posed in the camera's own space: undo last frame's move onto a stage first, because a rig
+      // measures its bones in world space
+      slot.group.position.set(0, 0, 0);
+      slot.group.scale.setScalar(1);
+      slot.group.updateMatrixWorld(true);
+      let stood = null;
+      if (whole && t.body) {
+        const figure = this._figure(slot);
+        figure.object.visible = settings.showMask;
+        stood = figure.update(t.body, { build: settings.build, track: t, dt });
+      } else if (slot.body) {
+        slot.body.object.visible = false;
+      }
+
+      // On a stage the person is moved, whole, to stand on its floor; over the camera's picture they stay put.
+      // A body is built to lie over the person in the picture, which makes it the right size only at the distance
+      // the tracker thinks they are. On a stage it is brought back to the size the pose model measured them at,
+      // and kept as far left or right of the middle as they are in the picture.
+      if (slot.shadow) slot.shadow.visible = false;
+      if (staged) {
+        const k = stood ? 1 / Math.max(0.3, t.body.k) : 1;
+        const anchor = stood ? stood.hips : t.pos;
+        // with a body: feet on the floor. With only a head: at the height a head is
+        const height = stood ? Math.max(20, (stood.hips.y - stood.ground) * k) : 152;
+        slot.hipHeight = slot.hipHeight ? slot.hipHeight + (height - slot.hipHeight) * (dt > 0 ? 0.15 : 0) : height;
+        const across = (anchor.x / Math.max(50, -anchor.z)) * this.scenery.camera.position.z;
+        slot.group.scale.setScalar(k);
+        slot.group.position.set(across - anchor.x * k, slot.hipHeight - anchor.y * k, -anchor.z * k);
+        if (stood) {
+          if (!slot.shadow) { slot.shadow = this.scenery.shadow(); slot.group.add(slot.shadow); }
+          slot.shadow.visible = true;
+          slot.shadow.material.opacity = this.scenery.shadowStrength;
+          slot.shadow.position.set(anchor.x, (0.6 - slot.group.position.y) / k, anchor.z);
+          slot.shadow.scale.set(stood.S * 3.4, stood.S * 2.3, 1);
+        }
+      } else {
+        slot.hipHeight = 0;
+      }
     }
     for (const [id, slot] of this.slots) {
       if (!live.has(id)) { this._dropSlot(slot); this.slots.delete(id); }
     }
-    this.renderer.render(this.scene, this.camera);
+    this.scenery.group.visible = staged;
+    this.scene.background = staged ? this.scenery.background : null;
+    this.scene.fog = staged && !this.scenery.panorama ? this.scenery.fog : null;
+    this.renderer.render(this.scene, staged ? this.scenery.camera : this.camera);
 
-    // ---- 2D: frame, privacy patches, masks
+    // ---- 2D
     octx.save();
     if (settings.mirror) octx.setTransform(-1, 0, 0, 1, w, 0);
+    this.report.heads = tracks.length;
+    if (staged) {
+      // a simulated place: the camera's picture is not drawn at all
+      octx.drawImage(this.gl, 0, 0, w, h);
+      octx.restore();
+      this.report.hidden = false;
+      return;
+    }
+    // over the camera's picture: the frame, then the cover over each person, then what was drawn in 3D
     const look = LOOKS[settings.look] ?? 'none';
     if (look !== 'none') octx.filter = look;
     octx.drawImage(this.frame, 0, 0);
@@ -226,72 +317,24 @@ export class Stage {
 
     // Blind on a head that was just there: hide the whole picture rather than guess.
     const blind = settings.strict && tracks.some((t) => t.state === HOLD);
-    if (blind) this._pixelate(0, 0, w, h, Math.max(24, Math.round(Math.max(w, h) / 22)));
-
-    if (settings.underlay !== 'off' && !blind) {
-      for (const t of tracks) this._patch(t);
+    if (blind) {
+      this._pixelate(0, 0, w, h, Math.max(24, Math.round(Math.max(w, h) / 22)));
+    } else {
+      // the empty place is learned all the time, so `erase` has it when it is asked for; more often when it is on
+      if (dt > 0 && (settings.underlay === 'erase' || this._learnTick++ % 5 === 0)) this.cover.learn(this.frame, tracks, whole, settings.margin);
+      this.cover.apply(octx, this.frame, tracks, { mode: settings.underlay, color: settings.underlayColor, margin: settings.margin, body: whole });
     }
     octx.drawImage(this.gl, 0, 0, w, h);
 
     if (settings.showLandmarks) {
       octx.fillStyle = this.palette.accent;
       for (const t of tracks) {
-        if (!t.landmarks) continue;
-        for (const p of t.landmarks) octx.fillRect(p.x * w - 1, p.y * h - 1, 2, 2);
+        if (t.landmarks) for (const p of t.landmarks) octx.fillRect(p.x * w - 1, p.y * h - 1, 2, 2);
+        if (whole && t.body) for (let i = 0; i < 33; i++) octx.fillRect(t.body.px[i * 2] - 2, t.body.px[i * 2 + 1] - 2, 4, 4);
       }
     }
     octx.restore();
-    this.report.heads = tracks.length;
     this.report.hidden = blind;
-  }
-
-  /** The region of the picture that must not show the real head, as a path on the output context. */
-  _patchPath(t) {
-    const { w, h, octx } = this;
-    const m = this.settings.margin;
-    octx.beginPath();
-    if (t.state === FACE && t.landmarks) {
-      let cx = 0, cy = 0;
-      for (const i of FACE_OVAL) { cx += t.landmarks[i].x; cy += t.landmarks[i].y; }
-      cx = (cx / FACE_OVAL.length) * w;
-      cy = (cy / FACE_OVAL.length) * h;
-      const k = 1.16 * m;
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-      for (let n = 0; n < FACE_OVAL.length; n++) {
-        const p = t.landmarks[FACE_OVAL[n]];
-        const x = cx + (p.x * w - cx) * k;
-        const y = cy + (p.y * h - cy) * k;
-        if (n) octx.lineTo(x, y); else octx.moveTo(x, y);
-        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
-      octx.closePath();
-      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, size: t.sizePx };
-    }
-    // no face to outline: a generous oval where the head is, wider the longer it has gone unseen
-    const grow = t.state === HOLD ? Math.min(2.2, 1 + t.heldMs / 600) : 1;
-    const rx = 0.5 * t.sizePx * 1.65 * m * grow;
-    const ry = rx * 1.25;
-    octx.ellipse(t.cx, t.cy, rx, ry, 0, 0, Math.PI * 2);
-    return { x: t.cx - rx, y: t.cy - ry, w: rx * 2, h: ry * 2, size: t.sizePx };
-  }
-
-  _patch(t) {
-    const { octx, settings } = this;
-    octx.save();
-    const box = this._patchPath(t);
-    octx.clip();
-    if (settings.underlay === 'solid') {
-      octx.fillStyle = settings.underlayColor;
-      octx.fillRect(box.x - 2, box.y - 2, box.w + 4, box.h + 4);
-    } else if (settings.underlay === 'blur') {
-      octx.filter = `blur(${Math.max(8, Math.round(box.size / 5))}px)`;
-      octx.drawImage(this.frame, 0, 0);
-      octx.filter = 'none';
-    } else {
-      // about six blocks across a face: nothing of it survives
-      this._pixelate(box.x, box.y, box.w, box.h, Math.max(10, Math.round(box.size / 6)));
-    }
-    octx.restore();
   }
 
   _pixelate(x, y, w, h, block) {
@@ -326,9 +369,14 @@ export class Stage {
     slot.fit.visible = true;
     slot.guide.visible = true;
     slot.mask?.update?.({ dt: 0, time: this.time, blend: {}, state: FACE, angVel: _v.set(0, 0, 0) });
-    for (const [id, other] of this.slots) other.root.visible = id === 'calibration';
+    slot.group.position.set(0, 0, 0);
+    if (slot.body) slot.body.object.visible = false;
+    for (const [id, other] of this.slots) other.group.visible = id === 'calibration';
+    this.scenery.group.visible = false;
+    this.scene.background = null;
+    this.scene.fog = null;
     this.renderer.render(this.scene, this.camera);
-    for (const other of this.slots.values()) other.root.visible = true;
+    for (const other of this.slots.values()) other.group.visible = true;
     octx.save();
     octx.fillStyle = this.palette.stage;
     octx.fillRect(0, 0, w, h);
@@ -344,7 +392,7 @@ export class Stage {
 
   /** Does the fitted mask reach round a real head? A list of the sides where it falls short. */
   coverageGaps() {
-    if (!this.maskDef) return [];
+    if (!this.maskDef || this.maskDef.kind === 'rig') return [];
     if (!this._maskBox) {
       // the mask's own extent, measured once per mask
       const probe = this.maskDef.create();

@@ -30,6 +30,9 @@ const els = {
   margin: $('margin'), marginVal: $('margin-val'), people: $('people'), landmarks: $('landmarks'), engine: $('engine'), look: $('look'),
   scrubrow: $('scrubrow'), scrub: $('scrub'), time: $('time'), duration: $('duration'), sound: $('sound'),
   pins: $('pins'), fitbar: $('fitbar'), fitApply: $('fit-apply'), fitCancel: $('fit-cancel'),
+  character: $('character'), scene: $('scene'), stageLook: $('stage-look'), sceneHint: $('scene-hint'), coverHint: $('cover-hint'),
+  skyRow: $('sky-row'), skyOpen: $('sky-open'), skyClear: $('sky-clear'), skyInput: $('sky-input'),
+  build: $('build'), buildVal: $('build-val'), bodyHint: $('body-hint'),
 };
 const exportKeys = all('[data-do=export]');
 const recordKeys = all('[data-do=record]');
@@ -44,7 +47,8 @@ const token = (name) => getComputedStyle(document.body).getPropertyValue(name).t
 stage.setPalette({ accent: token('--accent'), accent2: token('--accent2'), stage: token('--stage') });
 
 const prefs = store.load('prefs', {
-  mask: 'satyr', underlay: 'pixelate', margin: 1, strict: true, people: 1, look: 'none', keepAudio: true, showMask: true,
+  mask: 'satyr', underlay: 'pixelate', margin: 1, strict: true, people: 4, peopleChosen: false, look: 'none', keepAudio: true, showMask: true,
+  character: 'head', scene: 'camera', stageLook: 'void', build: 1,
 });
 const fits = store.load('fits', {});
 const masks = [satyr, helm, bag];
@@ -143,11 +147,39 @@ function selectMask(id) {
   const m = currentMask();
   stage.setMask(m);
   renderMaskList();
-  els.maskHint.textContent = m.kind === 'glb'
-    ? `${m.note.toLowerCase()}. size and place it under fit, on the right`
-    : 'or drop a .glb head model anywhere';
+  els.maskHint.textContent = m.kind === 'glb' ? `${m.note.toLowerCase()}. size and place it under fit, on the right`
+    : m.kind === 'rig' ? `${m.note.toLowerCase()}. it moves with your whole body`
+      : 'drop a .glb anywhere: a head model, or a rigged character that moves with the whole body';
+  syncBody();
   applyFit({ quiet: true });
 }
+
+/** Whether the tracker follows whole bodies, and what the controls that depend on it say. */
+function syncBody() {
+  const rig = currentMask().kind === 'rig';
+  const whole = rig || stage.settings.character === 'body';
+  if (tracker) {
+    tracker.wantBody = whole;
+    // the segmenter only matters while something real is being covered
+    tracker.wantSegments = stage.settings.scene !== 'stage' && stage.settings.underlay !== 'off';
+  }
+  setSeg(els.character, whole ? 'body' : 'head');
+  for (const b of els.character.querySelectorAll('button')) b.disabled = rig && b.dataset.value === 'head';
+  const staged = stage.settings.scene === 'stage';
+  els.stageLook.hidden = els.skyRow.hidden = !staged;
+  els.sceneHint.textContent = staged
+    ? 'a simulated place: nothing of the real picture is shown. drop a 360 picture (2:1) to stand in it'
+    : 'the character over the person, in the real picture';
+  els.coverHint.textContent = staged ? 'on a stage nothing of the real picture is shown, so there is nothing to cover'
+    : whole ? 'the whole person is hidden under the figure too, so a gap never shows them. erase needs a camera that stays put'
+      : 'the face is hidden under the mask too, so a gap never shows skin';
+  els.bodyHint.textContent = rig ? 'a rigged character is sized by your trunk; build makes it bigger or smaller'
+    : 'how thick the figure is. it is strung between your own joints, so it always has your height and reach';
+  redraw();
+}
+
+function setCharacter(v) { stage.settings.character = v; savePref('character', v); syncBody(); }
+function setScene(v) { stage.settings.scene = v; setSeg(els.scene, v); savePref('scene', v); syncBody(); }
 
 async function removeMask(m) {
   masks.splice(masks.indexOf(m), 1);
@@ -160,7 +192,7 @@ async function removeMask(m) {
 async function importGlb(file) {
   try {
     const buffer = await file.arrayBuffer();
-    const name = file.name.replace(/\.glb$/i, '');
+    const name = file.name.replace(/\.(glb|vrm)$/i, '');
     const id = `glb-${name}-${file.size}`;
     if (!masks.some((m) => m.id === id)) {
       masks.push(await loadGlbMask(buffer.slice(0), name, id));
@@ -195,7 +227,9 @@ function describe() {
       : lost ? (stage.settings.strict ? 'head lost · picture hidden' : 'head lost · holding the mask')
         : body ? 'following the head from the body'
           : t.length > 1 ? `${t.length} faces locked` : 'face locked';
-    text = `${what} · ${state.fps.toFixed(0)} fps · ${stage.w} × ${stage.h}`;
+    const whole = tracker?.wantBody ? (t.some((x) => x.body) ? ' · body followed' : ' · looking for the body') : '';
+    const where = stage.settings.scene === 'stage' ? ' · on stage' : '';
+    text = `${what}${whole}${where} · ${state.fps.toFixed(0)} fps · ${stage.w} × ${stage.h}`;
   }
   els.status.textContent = text;
 }
@@ -257,6 +291,7 @@ function stopSource() {
   state.tracks = [];
   state.lastFrameAt = 0;
   tracker?.reset();
+  stage.forget();
 }
 
 function setMirror(on) {
@@ -576,7 +611,35 @@ function showGuide(on) {
 els.guideKey.addEventListener('click', () => showGuide(els.guide.hidden));
 els.guideClose.addEventListener('click', () => showGuide(false));
 
-bindSeg(els.underlay, (v) => { stage.settings.underlay = v; savePref('underlay', v); redraw(); });
+bindSeg(els.underlay, (v) => { stage.settings.underlay = v; savePref('underlay', v); syncBody(); });
+bindSeg(els.character, setCharacter);
+bindSeg(els.scene, setScene);
+bindSeg(els.stageLook, (v) => { stage.scenery.set(v); savePref('stageLook', v); redraw(); });
+els.build.addEventListener('input', () => {
+  stage.settings.build = Number(els.build.value);
+  els.buildVal.textContent = stage.settings.build.toFixed(2);
+  savePref('build', stage.settings.build);
+  redraw();
+});
+
+// a picture all the way round, to stand the character in on the stage
+async function useSky(file) {
+  try {
+    const url = URL.createObjectURL(file);
+    const texture = await new THREE.TextureLoader().loadAsync(url);
+    URL.revokeObjectURL(url);
+    const { width, height } = texture.image;
+    stage.scenery.setPanorama(texture);
+    els.skyClear.disabled = false;
+    setScene('stage');
+    toast(Math.abs(width / height - 2) > 0.1 ? `${file.name} is not 2:1, so it will look stretched. a 360 picture is twice as wide as it is tall` : `standing in ${file.name}`);
+  } catch (err) {
+    toast(`could not read ${file.name} as a picture: ${err.message}`);
+  }
+}
+els.skyOpen.addEventListener('click', () => els.skyInput.click());
+els.skyInput.addEventListener('change', () => { if (els.skyInput.files[0]) useSky(els.skyInput.files[0]); els.skyInput.value = ''; });
+els.skyClear.addEventListener('click', () => { stage.scenery.setPanorama(null); els.skyClear.disabled = true; redraw(); });
 bindToggle(els.strict, (on) => { stage.settings.strict = on; if (tracker) tracker.failClosed = on; savePref('strict', on); redraw(); });
 bindToggle(els.showMask, (on) => { stage.settings.showMask = on; savePref('showMask', on); redraw(); });
 bindToggle(els.mirror, (on) => { stage.settings.mirror = on; redraw(); });
@@ -593,6 +656,7 @@ els.margin.addEventListener('input', () => {
 });
 els.look.addEventListener('input', () => { stage.settings.look = els.look.value; savePref('look', els.look.value); redraw(); });
 els.people.addEventListener('change', async () => {
+  prefs.peopleChosen = true;
   savePref('people', Number(els.people.value));
   await tracker?.setMaxPeople(prefs.people);
 });
@@ -626,6 +690,7 @@ els.video.addEventListener('seeked', () => {
   if (state.manual) return; // a test is stepping the frames itself
   // a jump in time: nobody carries over, and a paused video still needs its new frame masked
   tracker?.reset();
+  stage.forget();
   state.lastFrameAt = 0;
   if (els.video.paused) tick();
 });
@@ -639,7 +704,9 @@ window.addEventListener('drop', (e) => {
   const f = e.dataTransfer?.files?.[0];
   if (!f) return;
   if (!tracker) { toast('the tracker is still loading. drop it again in a moment'); return; }
-  if (/\.glb$/i.test(f.name)) importGlb(f); else openFile(f);
+  if (/\.(glb|vrm)$/i.test(f.name)) importGlb(f);
+  else if (f.type.startsWith('image/')) useSky(f);
+  else openFile(f);
 });
 window.addEventListener('resize', () => { if (state.calibrating) placePins(); });
 window.addEventListener('keydown', (e) => {
@@ -652,6 +719,8 @@ window.addEventListener('keydown', (e) => {
   } else if (key === 'e') runExport();
   else if (key === 'r') toggleRecord();
   else if (key === 'm') { if (state.kind) setMirror(!stage.settings.mirror); }
+  else if (key === 'b') { if (currentMask().kind !== 'rig') setCharacter(stage.settings.character === 'body' ? 'head' : 'body'); }
+  else if (key === 'v') setScene(stage.settings.scene === 'stage' ? 'camera' : 'stage');
   else if (key === 'f') document.querySelector('[data-action=fullscreen]').click();
   else if (key === 'escape') { if (state.calibrating) endCalibration(false); else showGuide(false); }
 });
@@ -659,7 +728,16 @@ window.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- start
 
 async function init() {
-  Object.assign(stage.settings, { underlay: prefs.underlay, margin: prefs.margin, strict: prefs.strict, look: prefs.look, showMask: prefs.showMask });
+  Object.assign(stage.settings, {
+    underlay: prefs.underlay, margin: prefs.margin, strict: prefs.strict, look: prefs.look, showMask: prefs.showMask,
+    character: prefs.character, scene: prefs.scene, build: prefs.build,
+  });
+  stage.scenery.set(prefs.stageLook);
+  setSeg(els.scene, prefs.scene);
+  setSeg(els.stageLook, prefs.stageLook);
+  els.build.value = prefs.build;
+  paintRange(els.build);
+  els.buildVal.textContent = Number(prefs.build).toFixed(2);
   setSeg(els.underlay, prefs.underlay);
   setPressed(els.strict, prefs.strict);
   setPressed(els.showMask, prefs.showMask);
@@ -668,6 +746,8 @@ async function init() {
   paintRange(els.margin);
   els.marginVal.textContent = Number(prefs.margin).toFixed(2);
   els.look.value = prefs.look;
+  // covering one person was the old default: everyone else walked through bare. Four, unless chosen
+  if (!prefs.peopleChosen) prefs.people = 4;
   els.people.value = String(prefs.people);
 
   for (const saved of await store.savedMasks()) {
@@ -686,6 +766,7 @@ async function init() {
     tracker = new HeadTracker(lm);
     tracker.maxPeople = prefs.people;
     tracker.failClosed = prefs.strict;
+    syncBody();
     els.engine.textContent = `tracker: mediapipe on ${lm.delegate.toLowerCase()} · models ${lm.localModels ? 'served from this page' : 'fetched from storage.googleapis.com'}`;
   } catch (err) {
     console.error(err);

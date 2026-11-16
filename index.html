@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mask Layer - JAS.BLACK</title>
-<meta name="description" content="Cover your face in any video or live feed with a tracked 3D mask.">
+<meta name="description" content="Cover yourself in any video or live feed with a tracked 3D mask or a whole character.">
 <meta name="theme-color" content="#121314">
 <link rel="canonical" href="https://mask.jas.black/">
 
@@ -32,7 +32,7 @@
 </head>
 <!-- A console-layout JAS.BLACK tool: title and status lights, transport, view keys;
      source, mask, cover and save on the left, the stage, fit and tracking on the right. Always the full console. -->
-<body data-ui="dark" data-tool="mask" data-version="0.2.1">
+<body data-ui="dark" data-tool="mask" data-version="0.3.0">
 
 <header class="topbar">
   <div class="hl">
@@ -70,20 +70,44 @@
     </section>
 
     <section class="panel">
-      <div class="panel-title"><b>mask</b><span>pick one</span></div>
-      <div class="tiles" id="masks" role="radiogroup" aria-label="Mask"></div>
+      <div class="panel-title"><b>character</b><span>pick one</span></div>
+      <div class="tiles" id="masks" role="radiogroup" aria-label="Character"></div>
+      <div class="seg" role="group" aria-label="How much of the person the character covers" id="character" style="margin-top:9px">
+        <button type="button" aria-pressed="true" data-value="head" title="A mask on the head (B)">head</button>
+        <button type="button" aria-pressed="false" data-value="body" title="A whole figure, head to foot (B)">whole body</button>
+      </div>
       <div class="keys-row">
         <button type="button" class="key" id="import">import .glb</button>
-        <button type="button" class="key toggle" id="show-mask" aria-pressed="true" title="Off leaves only the cover under the mask">show mask</button>
+        <button type="button" class="key toggle" id="show-mask" aria-pressed="true" title="Off leaves only the cover">show character</button>
       </div>
-      <p class="hint" id="mask-hint">or drop a .glb head model anywhere</p>
-      <input type="file" id="glb-input" accept=".glb,model/gltf-binary" hidden>
+      <p class="hint" id="mask-hint">drop a .glb anywhere: a head model, or a rigged character that moves with the whole body</p>
+      <input type="file" id="glb-input" accept=".glb,.vrm,model/gltf-binary" hidden>
     </section>
 
     <section class="panel">
-      <div class="panel-title"><b>cover</b><span>under the mask</span></div>
-      <div class="seg" role="group" aria-label="What hides the face under the mask" id="underlay">
+      <div class="panel-title"><b>scene</b><span>where it stands</span></div>
+      <div class="seg" role="group" aria-label="What is behind the character" id="scene">
+        <button type="button" aria-pressed="true" data-value="camera" title="The real picture, with the character over the person (V)">camera</button>
+        <button type="button" aria-pressed="false" data-value="stage" title="A simulated place: nothing of the real picture (V)">stage</button>
+      </div>
+      <div class="seg" role="group" aria-label="Which stage" id="stage-look" style="margin-top:9px" hidden>
+        <button type="button" aria-pressed="true" data-value="void">void</button>
+        <button type="button" aria-pressed="false" data-value="studio">studio</button>
+        <button type="button" aria-pressed="false" data-value="dusk">dusk</button>
+      </div>
+      <div class="keys-row" id="sky-row" hidden>
+        <button type="button" class="key" id="sky-open">360 picture</button>
+        <button type="button" class="key" id="sky-clear" disabled>clear it</button>
+      </div>
+      <p class="hint" id="scene-hint">the character over the person, in the real picture</p>
+      <input type="file" id="sky-input" accept="image/*" hidden>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><b>cover</b><span>under the character</span></div>
+      <div class="seg" role="group" aria-label="What hides the person under the character" id="underlay">
         <button type="button" aria-pressed="true" data-value="pixelate">pixels</button>
+        <button type="button" aria-pressed="false" data-value="erase" title="Paint in the place as it looks with nobody there (a camera that stays put)">erase</button>
         <button type="button" aria-pressed="false" data-value="solid">paint</button>
         <button type="button" aria-pressed="false" data-value="blur">blur</button>
         <button type="button" aria-pressed="false" data-value="off">none</button>
@@ -91,7 +115,7 @@
       <div class="keys-row">
         <button type="button" class="key toggle" id="strict" aria-pressed="true" title="If a head that was just there cannot be found, hide everything until it is">hide picture if a head is lost</button>
       </div>
-      <p class="hint">the face is hidden under the mask too, so a gap never shows skin</p>
+      <p class="hint" id="cover-hint">the face is hidden under the mask too, so a gap never shows skin</p>
     </section>
 
     <section class="panel">
@@ -138,12 +162,13 @@
       <section class="panel guide" id="guide" hidden>
         <div class="panel-title"><b>guide</b><button type="button" class="key" id="guide-close" style="height:27px;font-size:9px">close</button></div>
         <p>open a video or start the camera. it all runs in this browser: nothing is uploaded.</p>
-        <p>pick a mask, or drop your own .glb head model on the page.</p>
-        <p>cover is what hides the face under the mask. a gap in a mask then shows that, never skin.</p>
+        <p>pick a character, and whether it is a mask on the head or a whole figure over the body. drop a .glb on the page to add your own: a head model, or a rigged character.</p>
+        <p>scene: camera keeps the real picture, with the character over the person. stage puts the character in a simulated place, and nothing of the real picture is shown.</p>
+        <p>cover is what hides the person under the character. a gap then shows that, never skin. erase paints in the place as it looks with nobody there.</p>
         <p>export writes the file again with a mask on every frame and keeps the sound. record saves what you see.</p>
         <p><i class="led on"></i>lock is green while the face is tracked, and <i class="led p on"></i>violet while the mask follows the head from the body, in profile or turned away.</p>
         <p>if a head that was just there cannot be found, the whole picture is hidden until it is.</p>
-        <p>fit, on the right, is the size, place, turn and stretch of each mask, and fit by points for a model of your own.</p>
+        <p>fit, on the right, is the size, place, turn and stretch of each head mask, and fit by points for a model of your own. body sets how thick the figure is.</p>
         <p>watch an export through once before you publish it.</p>
       </section>
     </div>
@@ -156,7 +181,7 @@
     </div>
     <div class="lcd"><span id="status-line">loading tracker…</span><span>local processing</span></div>
     <footer class="keys">
-      <span class="on-grid"><kbd>Space</kbd>pause <kbd>E</kbd>export <kbd>R</kbd>record <kbd>M</kbd>mirror <kbd>F</kbd>full screen</span>
+      <span class="on-grid"><kbd>Space</kbd>pause <kbd>E</kbd>export <kbd>R</kbd>record <kbd>B</kbd>body <kbd>V</kbd>stage <kbd>M</kbd>mirror <kbd>F</kbd>full screen</span>
       <span class="on-grid">right-click a slider resets it</span>
     </footer>
   </section>
@@ -181,11 +206,17 @@
       <p class="hint" id="coverage"></p>
     </section>
 
+    <section class="panel" id="body-panel">
+      <div class="panel-title"><b>body</b></div>
+      <label class="control"><span class="control-top"><span>build</span><output id="build-val"></output></span><input type="range" id="build" min="0.8" max="1.5" step="0.01" value="1"></label>
+      <p class="hint" id="body-hint">how thick the figure is. it is strung between your own joints, so it always has your height and reach</p>
+    </section>
+
     <section class="panel">
       <div class="panel-title"><b>tracking</b></div>
       <label class="control"><span class="control-top"><span>cover size</span><output id="margin-val"></output></span><input type="range" id="margin" min="0.85" max="1.7" step="0.05" value="1"></label>
       <label class="control"><span class="control-top"><span>people to cover</span></span>
-        <select id="people" aria-label="People to cover"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+        <select id="people" aria-label="People to cover"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option></select>
       </label>
       <div class="keys-row">
         <button type="button" class="key toggle" id="landmarks" aria-pressed="false">tracking points</button>

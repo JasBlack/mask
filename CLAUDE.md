@@ -11,9 +11,10 @@ it never shared anything with the game.
 
 - Vite 8, plain JavaScript modules, no framework. three.js for the masks.
 - MediaPipe Tasks Vision (`@mediapipe/tasks-vision`): face landmarker (478 points, 52 blendshapes, head pose),
-  pose landmarker (full), and a second face landmarker in image mode for the zoom pass.
+  pose landmarker (full), a second face landmarker in image mode for the zoom pass, and the image segmenter with
+  the multiclass selfie model (hair, body skin, face skin, clothes, other, background) for the cover.
 - Mediabunny for reading and writing video through WebCodecs (export and record). Not MediaRecorder.
-- Nothing loads from another host at run time. The MediaPipe wasm runtime and both models are copied or
+- Nothing loads from another host at run time. The MediaPipe wasm runtime and the models are copied or
   downloaded into `public/` by `scripts/fetch-assets.mjs` on `npm install`; fonts are in `src/fonts/`.
 
 ## Commands
@@ -34,10 +35,16 @@ src/main.js                   wiring: sources, controls, status line and lights,
 src/family.css                kit/family.css from the JAS.BLACK blueprint, unchanged. Tokens and shared components
 src/family.js                 kit/family.js as a module (one difference, noted at the top of the file)
 src/mask.css                  what this tool adds: fonts, mask tiles, toggle keys, pins, panels on the stage
-src/tracking/landmarkers.js   loads the three MediaPipe landmarkers from this app's own files
-src/tracking/headTracker.js   the three states (face / body / hold), the zoom pass, smoothing, when to let go
+src/tracking/landmarkers.js   loads the MediaPipe landmarkers and the segmenter from this app's own files
+src/tracking/headTracker.js   heads in three states (face / body / hold), the zoom pass, smoothing, when to let go;
+                              the whole body under each head (33 joints, camera space, cm); the segment labels
 src/tracking/canonical.js     the head space masks are built in (cm; +X wearer's left, +Y up, +Z out of the face)
-src/render/stage.js           frame copy -> cover -> 3D masks -> finished picture; mask thumbnails; fit preview
+src/body/skeleton.js          the pose joints by name; legs the tracker cannot see eased toward a standing leg
+src/body/puppet.js            the whole-body figure made in code, strung between the wearer's joints
+src/body/rig.js               drives any humanoid skeleton in a .glb from the tracked body (rest pose measured)
+src/render/stage.js           frame copy -> cover -> 3D -> finished picture; on a stage, the simulated place instead
+src/render/cover.js           what hides the real person: segment labels + solid head in 3D + face and limbs
+src/render/scenery.js         the stages: sky, floor, dot grid, shadows, a 360 picture
 src/masks/                    satyr.js, helm.js, bag.js (made in code), glb.js (imported models), geom.js
 src/export/exporter.js        frame-by-frame export, live recorder, both constant frame rate
 src/storage.js                localStorage under mask-v1.*, imported .glb files in IndexedDB
@@ -97,6 +104,10 @@ All need `npm run build`, `npm run preview`, and Playwright with Chromium availa
 Works (checked in headless Chromium, software rendering, on public sample footage):
 
 - Face lock, body fallback in profile and turned away, zoom pass for small faces, hold and whole-picture hide.
+- The cover takes whole heads (hair, beards, bald scalps, the back of the head in profile) and, in whole-body mode,
+  whole people, also people who are not tracked. Checked by eye on the test clips, mask off.
+- Whole-body figure and rigged characters (Mixamo test models from the three.js examples), over the camera and
+  on a stage.
   Single person: no dropped mask and no face pixels shown across 528 frames of head turns, also with two of every
   three frames skipped.
 - Export: H.264 MP4, constant frame rate, frames in = frames out, sound carried over.
@@ -106,13 +117,18 @@ Works (checked in headless Chromium, software rendering, on public sample footag
 Known limits:
 
 - A head never detected cannot be covered: people a few pixels tall in the distance are bare until about 10 px.
+- In full profile the face tracker reports about 60 degrees of turn at most, so head masks look three quarters on.
+- A rigged character's fingers are not driven (the pose model has no finger joints): hands stay in their rest pose.
 - Several people: the body tracker follows one body at a time; two people turned away at once trip the hide.
 - Record has no sound. Export holds the whole output in memory, so very long videos may not fit.
 - The Iridescent Satyr is made in code from the character sheet: a stand-in until the sculpt exists as a `.glb`.
 
 Unverified:
 
-- A real camera and a real graphics card (so no real-time frame rate has been measured), Safari, phones.
+- A real camera and a real graphics card (so no real-time frame rate has been measured), Safari, phones. The owner's
+  own recordings from the live site (camera, Mac) showed the head-only cover was not enough in profile: that is
+  what the segmenter cover is for. It has not been seen on a real camera yet.
+- VRM and Ready Player Me files: bone naming is handled, but only Mixamo rigs have been run.
 - The published site at mask.jas.black: it needs Pages switched on and the DNS record first (see Deployment).
 
 ## Gotchas
@@ -133,5 +149,12 @@ Unverified:
 - The hair cap of the satyr is laid out meridian by meridian down to the hairline, so its edge is smooth. Cutting
   triangles out of a sphere by a threshold gives a stepped edge.
 - `renderer.setSize` is changed and put back by `Stage.thumbnail`; call it only between frames.
+- `Object3D.getWorldPosition` refreshes the parents' matrices. In `rig.js`, read a bone's position before moving
+  the figure, never after: reading it after measures it from the new place, and the figure lands with its head on
+  the camera.
+- The segmenter runs on a 384 px wide copy of the frame; `Cover._labelled` widens its labels and scales them up.
+  It is switched off on a stage and with the cover set to none (`tracker.wantSegments`).
+- On a stage a figure is rebuilt at the size the pose model measured (it is built in camera space at the tracked
+  distance, which is only right over the picture) and kept as far left or right as in the picture.
 - The exporter sets `frameRate` (constant frame rate out). For a steady source that is frame for frame; for a
   variable one frames are repeated or left out to keep the rate. Every frame that is written is masked either way.
